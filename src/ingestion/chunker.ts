@@ -6,7 +6,7 @@
  * tokenizer and hard-truncates before encoding, so this only needs to be a good estimate.
  */
 
-import { rag } from "../config.ts";
+import { rag } from "../rag-config.ts";
 
 export interface SourceText {
   page: number;

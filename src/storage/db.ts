@@ -1,13 +1,4 @@
-/**
- * SQLite storage layer (bun:sqlite) + sqlite-vec for vectors.
- *
- * Design rules (see plan §4, §9):
- *  - One embedded DB holds users, documents, chunks, vectors, passwords, audit log.
- *  - Every domain row is keyed by `user_id`; ALL reads must filter on it (isolation).
- *  - `documents.content_hash` enforces per-user dedup via a UNIQUE constraint.
- */
-
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as sqliteVec from "sqlite-vec";
@@ -39,19 +30,19 @@ export interface ChunkRow {
   text: string;
 }
 
-let db: Database | null = null;
+let db: Database.Database | null = null;
 
-export function getDb(): Database {
+export function getDb(): Database.Database {
   if (db) return db;
 
   const dbPath = join(config.storage.dataDir, "medical-record.sqlite");
   mkdirSync(dirname(dbPath), { recursive: true });
 
-  const database = new Database(dbPath, { create: true });
-  database.exec("PRAGMA journal_mode = WAL;");
-  database.exec("PRAGMA foreign_keys = ON;");
+  const database = new Database(dbPath);
+  database.pragma("journal_mode = WAL");
+  database.pragma("foreign_keys = ON");
 
-  // Load sqlite-vec extension (vec0 virtual tables).
+  // Load sqlite-vec extension.
   try {
     sqliteVec.load(database);
   } catch (err) {
@@ -65,7 +56,7 @@ export function getDb(): Database {
   return database;
 }
 
-function migrate(database: Database): void {
+function migrate(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS users (
       user_id     INTEGER PRIMARY KEY,
@@ -116,7 +107,7 @@ function migrate(database: Database): void {
     );
   `);
 
-  // Vector table (sqlite-vec). 384-dim float, cosine distance. Keyed by chunk rowid mapping.
+  // Vector table (sqlite-vec). 384-dim float, cosine distance.
   database.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(
       chunk_id TEXT PRIMARY KEY,
@@ -126,11 +117,9 @@ function migrate(database: Database): void {
   `);
 }
 
-/* ----------------------------- users / consent ----------------------------- */
-
 export function ensureUser(userId: number): void {
   getDb()
-    .query(
+    .prepare(
       `INSERT INTO users (user_id, created_at) VALUES (?, ?)
        ON CONFLICT(user_id) DO NOTHING`,
     )
@@ -139,7 +128,7 @@ export function ensureUser(userId: number): void {
 
 export function hasConsent(userId: number): boolean {
   const row = getDb()
-    .query<{ consent_at: number | null }, [number]>(
+    .prepare<[number], { consent_at: number | null }>(
       `SELECT consent_at FROM users WHERE user_id = ?`,
     )
     .get(userId);
@@ -149,17 +138,15 @@ export function hasConsent(userId: number): boolean {
 export function setConsent(userId: number): void {
   ensureUser(userId);
   getDb()
-    .query(`UPDATE users SET consent_at = ? WHERE user_id = ?`)
+    .prepare(`UPDATE users SET consent_at = ? WHERE user_id = ?`)
     .run(Date.now(), userId);
   audit(userId, "consent_granted");
 }
 
-/* -------------------------------- documents -------------------------------- */
-
 export function findDocByHash(userId: number, contentHash: string): DocumentRow | null {
   return (
     getDb()
-      .query<DocumentRow, [number, string]>(
+      .prepare<[number, string], DocumentRow>(
         `SELECT * FROM documents WHERE user_id = ? AND content_hash = ?`,
       )
       .get(userId, contentHash) ?? null
@@ -175,7 +162,7 @@ export function insertDocument(doc: {
   source: string;
 }): void {
   getDb()
-    .query(
+    .prepare(
       `INSERT INTO documents (doc_id, user_id, filename, mime, content_hash, status, source, created_at)
        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
     )
@@ -188,7 +175,7 @@ export function setDocStatus(
   opts: { pages?: number; error?: string | null } = {},
 ): void {
   getDb()
-    .query(
+    .prepare(
       `UPDATE documents SET status = ?, pages = COALESCE(?, pages), error = ? WHERE doc_id = ?`,
     )
     .run(status, opts.pages ?? null, opts.error ?? null, docId);
@@ -196,7 +183,7 @@ export function setDocStatus(
 
 export function listDocuments(userId: number): DocumentRow[] {
   return getDb()
-    .query<DocumentRow, [number]>(
+    .prepare<[number], DocumentRow>(
       `SELECT * FROM documents WHERE user_id = ? ORDER BY created_at DESC`,
     )
     .all(userId);
@@ -205,7 +192,7 @@ export function listDocuments(userId: number): DocumentRow[] {
 export function getDocument(userId: number, docId: string): DocumentRow | null {
   return (
     getDb()
-      .query<DocumentRow, [number, string]>(
+      .prepare<[number, string], DocumentRow>(
         `SELECT * FROM documents WHERE user_id = ? AND doc_id = ?`,
       )
       .get(userId, docId) ?? null
@@ -218,9 +205,9 @@ export function deleteDocument(userId: number, docId: string): boolean {
   if (!doc) return false;
 
   const tx = database.transaction(() => {
-    database.query(`DELETE FROM vectors WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?)`).run(docId);
-    database.query(`DELETE FROM chunks WHERE doc_id = ? AND user_id = ?`).run(docId, userId);
-    database.query(`DELETE FROM documents WHERE doc_id = ? AND user_id = ?`).run(docId, userId);
+    database.prepare(`DELETE FROM vectors WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?)`).run(docId);
+    database.prepare(`DELETE FROM chunks WHERE doc_id = ? AND user_id = ?`).run(docId, userId);
+    database.prepare(`DELETE FROM documents WHERE doc_id = ? AND user_id = ?`).run(docId, userId);
   });
   tx();
   audit(userId, "document_deleted", docId);
@@ -230,21 +217,19 @@ export function deleteDocument(userId: number, docId: string): boolean {
 export function resetUser(userId: number): void {
   const database = getDb();
   const tx = database.transaction(() => {
-    database.query(`DELETE FROM vectors WHERE user_id = ?`).run(userId);
-    database.query(`DELETE FROM chunks WHERE user_id = ?`).run(userId);
-    database.query(`DELETE FROM documents WHERE user_id = ?`).run(userId);
-    database.query(`DELETE FROM pdf_passwords WHERE user_id = ?`).run(userId);
+    database.prepare(`DELETE FROM vectors WHERE user_id = ?`).run(userId);
+    database.prepare(`DELETE FROM chunks WHERE user_id = ?`).run(userId);
+    database.prepare(`DELETE FROM documents WHERE user_id = ?`).run(userId);
+    database.prepare(`DELETE FROM pdf_passwords WHERE user_id = ?`).run(userId);
   });
   tx();
   audit(userId, "user_reset");
 }
 
-/* ---------------------------------- chunks --------------------------------- */
-
 export function insertChunks(rows: ChunkRow[]): void {
   if (rows.length === 0) return;
   const database = getDb();
-  const stmt = database.query(
+  const stmt = database.prepare(
     `INSERT INTO chunks (chunk_id, doc_id, user_id, page, text) VALUES (?, ?, ?, ?, ?)`,
   );
   const tx = database.transaction((items: ChunkRow[]) => {
@@ -256,17 +241,15 @@ export function insertChunks(rows: ChunkRow[]): void {
 export function getChunk(userId: number, chunkId: string): ChunkRow | null {
   return (
     getDb()
-      .query<ChunkRow, [number, string]>(
+      .prepare<[number, string], ChunkRow>(
         `SELECT * FROM chunks WHERE user_id = ? AND chunk_id = ?`,
       )
       .get(userId, chunkId) ?? null
   );
 }
 
-/* --------------------------------- audit ----------------------------------- */
-
 export function audit(userId: number, event: string, docId?: string): void {
   getDb()
-    .query(`INSERT INTO audit_log (user_id, event, doc_id, created_at) VALUES (?, ?, ?, ?)`)
+    .prepare(`INSERT INTO audit_log (user_id, event, doc_id, created_at) VALUES (?, ?, ?, ?)`)
     .run(userId, event, docId ?? null, Date.now());
 }

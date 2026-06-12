@@ -8,7 +8,8 @@
  *  - Always cite source document + page; always append a disclaimer.
  */
 
-import { config, rag } from "../config.ts";
+import { config } from "../config.ts";
+import { rag } from "../rag-config.ts";
 import { createLogger } from "../util/logger.ts";
 import { embedQuery } from "./embeddings.ts";
 import { search, type ScoredChunk } from "./vectorstore.ts";

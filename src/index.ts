@@ -3,6 +3,7 @@
  * with long-polling (plan §2, §10).
  */
 
+import "dotenv/config";
 import { Bot } from "grammy";
 import { config } from "./config.ts";
 import { createLogger } from "./util/logger.ts";
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     log.info(`Received ${signal}, shutting down…`);
     await bot.stop();
-    server?.stop();
+    server?.close();
     await terminateOcr();
     process.exit(0);
   };

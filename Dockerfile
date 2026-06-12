@@ -1,19 +1,24 @@
 # syntax=docker/dockerfile:1
 
-# Bun base image (Debian-based so native deps like sharp & sqlite-vec work).
-FROM oven/bun:1-debian AS base
+FROM node:22-slim AS base
 WORKDIR /app
 
-# System deps: Spanish OCR data for tesseract, plus libs sharp/sqlite may need at runtime.
+# System deps: Spanish OCR data for tesseract, plus libs sharp/canvas may need at runtime + build time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-spa \
     ca-certificates \
+    build-essential \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libjpeg-dev \
+    libgif-dev \
+    librsvg2-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies (cached layer).
-COPY package.json bun.lock* ./
-RUN bun install --frozen-lockfile || bun install
+COPY package.json package-lock.json ./
+RUN npm install
 
 # App source.
 COPY tsconfig.json ./
@@ -25,7 +30,6 @@ ENV DATA_DIR=/app/data \
     MODEL_CACHE_DIR=/app/data/models \
     NODE_ENV=production
 
-# The bot uses long-polling (no inbound port). Only the LAN web UI listens.
-EXPOSE 3002
+EXPOSE 3003
 
-CMD ["bun", "run", "src/index.ts"]
+CMD ["npx", "tsx", "src/index.ts"]

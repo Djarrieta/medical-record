@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { splitForTelegram } from "../src/util/telegram.ts";
 
 describe("qa helpers", () => {

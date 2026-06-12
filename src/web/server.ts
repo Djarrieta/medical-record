@@ -1,5 +1,5 @@
 /**
- * LAN-only upload web server (plan §8). Bun.serve + Hono.
+ * LAN-only upload web server (plan §8). @hono/node-server + Hono.
  *
  * Security:
  *  - Bind to the LAN only (WEB_HOST); never expose publicly. Transport is plain HTTP (MVP).
@@ -8,6 +8,7 @@
  */
 
 import { Hono } from "hono";
+import { serve } from "@hono/node-server";
 import { config } from "../config.ts";
 import { createLogger } from "../util/logger.ts";
 import { isAllowed } from "../bot/access.ts";
@@ -73,17 +74,16 @@ export function buildApp(): Hono {
   return app;
 }
 
-export function startWebServer(): ReturnType<typeof Bun.serve> | null {
+export function startWebServer(): ReturnType<typeof serve> | null {
   if (!config.web.enabled) {
     log.info("Web UI disabled (WEB_UI_ENABLED=false)");
     return null;
   }
   const app = buildApp();
-  const server = Bun.serve({
+  const server = serve({
     fetch: app.fetch,
     hostname: config.web.host,
     port: config.web.port,
-    maxRequestBodySize: (config.limits.maxUploadMb + 8) * 1024 * 1024,
   });
   log.info(`Web UI on http://${config.web.host}:${config.web.port} (LAN only)`);
   return server;
