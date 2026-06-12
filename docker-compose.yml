@@ -1,0 +1,17 @@
+services:
+  bot:
+    build: .
+    container_name: medical-record-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      MODEL_CACHE_DIR: /app/data/models
+    volumes:
+      # Persist sqlite + vectors, original files, and the embedding-model cache.
+      - ./data:/app/data
+    ports:
+      # LAN-only upload UI. Bind to the host LAN address in production instead of all
+      # interfaces if you want to restrict exposure further (e.g. "192.168.1.10:3000:3000").
+      - "3000:3000"

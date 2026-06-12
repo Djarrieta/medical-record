@@ -1,0 +1,27 @@
+# Secrets / env
+.env
+.env.local
+*.env
+
+# Data (PHI, vector store, sqlite, uploads)
+data/
+
+# Dependencies
+node_modules/
+
+# Bun
+bun.lockb
+.bun/
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
