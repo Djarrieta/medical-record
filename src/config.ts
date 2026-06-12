@@ -65,8 +65,8 @@ export const config = {
   web: {
     enabled: optional("WEB_UI_ENABLED", "true") === "true",
     host: optional("WEB_HOST", "0.0.0.0"),
-    port: intOpt("WEB_PORT", 3000),
-    baseUrl: optional("WEB_BASE_URL", "http://localhost:3000"),
+    port: intOpt("WEB_PORT", 3002),
+    baseUrl: optional("WEB_BASE_URL", "http://localhost:3002"),
     uploadTokenTtlMin: intOpt("UPLOAD_TOKEN_TTL_MIN", 10),
   },
   storage: {

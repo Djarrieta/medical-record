@@ -26,6 +26,6 @@ ENV DATA_DIR=/app/data \
     NODE_ENV=production
 
 # The bot uses long-polling (no inbound port). Only the LAN web UI listens.
-EXPOSE 3000
+EXPOSE 3002
 
 CMD ["bun", "run", "src/index.ts"]

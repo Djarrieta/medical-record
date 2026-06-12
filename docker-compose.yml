@@ -14,4 +14,4 @@ services:
     ports:
       # LAN-only upload UI. Bind to the host LAN address in production instead of all
       # interfaces if you want to restrict exposure further (e.g. "192.168.1.10:3000:3000").
-      - "3000:3000"
+      - "3002:3002"
