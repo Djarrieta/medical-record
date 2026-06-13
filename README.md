@@ -7,7 +7,7 @@ Personal medical-records assistant with two entry points:
   documents** (RAG) — in Spanish, with citations.
 
 > ⚠️ This bot is a **records lookup tool only**. It never gives medical advice, interpretation,
-> diagnosis, or recommendations. See [plan.md](plan.md) for the full design.
+> diagnosis, or recommendations. See [tech-spec.md](tech-spec.md) for the full design.
 
 ## How it works
 
@@ -54,7 +54,7 @@ docker compose up --build
 ```
 
 `./data` is mounted as a volume so the SQLite DB, vectors, original files, and the embedding-model
-cache persist across restarts. The web UI is published on the **LAN only** (port 3000).
+cache persist across restarts. The web UI is published on the **LAN only** (port 3003).
 
 ### Local dev
 
