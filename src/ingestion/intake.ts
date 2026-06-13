@@ -13,6 +13,7 @@ import { extract } from "./extractors.ts";
 import { PdfLockedError } from "./pdfUnlock.ts";
 import { embedPassagesBatched } from "../rag/embeddings.ts";
 import { upsertVectors } from "../rag/vectorstore.ts";
+import { notifyUser } from "../util/notifier.ts";
 import {
   audit,
   ensureUser,
@@ -53,6 +54,19 @@ let active = 0;
 
 function sha256(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
+}
+
+/**
+ * Notify the uploader once processing reaches a terminal state. Notes are skipped
+ * because /addnote already acknowledges inline.
+ */
+function notifyTerminal(req: IngestRequest, status: "ready" | "failed", info: string): void {
+  if (req.source === "note") return;
+  const text =
+    status === "ready"
+      ? `\u2705 ${req.filename} procesado correctamente. ${info}`
+      : `\u26a0\ufe0f No se pudo procesar ${req.filename}. ${info}`;
+  notifyUser(req.userId, text);
 }
 
 /**
@@ -101,6 +115,7 @@ async function pump(): Promise<void> {
         : "No se pudo procesar el archivo.";
     setDocStatus(job.docId, "failed", { error: message });
     job.onProgress?.(job.docId, "failed", message);
+    notifyTerminal(job.req, "failed", message);
   } finally {
     active -= 1;
     // Continue with the next queued job.
@@ -137,6 +152,7 @@ async function processJob(job: Job): Promise<void> {
       error: "No se extrajo texto del documento.",
     });
     job.onProgress?.(docId, "failed", "No se extrajo texto.");
+    notifyTerminal(req, "failed", "No se extrajo texto del documento.");
     return;
   }
 
@@ -159,6 +175,7 @@ async function processJob(job: Job): Promise<void> {
   setDocStatus(docId, "ready", { pages: result.pageCount });
   audit(req.userId, "document_indexed", docId);
   job.onProgress?.(docId, "ready", `${chunkRows.length} fragmentos indexados`);
+  notifyTerminal(req, "ready", `${result.pageCount} pág., ${chunkRows.length} fragmentos indexados.`);
   log.info(`Indexed doc ${docId}: ${chunkRows.length} chunks, ${result.pageCount} pages`);
 }
 

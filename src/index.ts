@@ -12,6 +12,7 @@ import { allowlistGuard } from "./bot/access.ts";
 import { registerHandlers } from "./bot/handlers.ts";
 import { startWebServer } from "./web/server.ts";
 import { terminateOcr } from "./ingestion/ocr.ts";
+import { setNotifier } from "./util/notifier.ts";
 
 const log = createLogger("main");
 
@@ -26,6 +27,9 @@ async function main(): Promise<void> {
   const bot = new Bot(config.telegram.botToken);
   bot.use(allowlistGuard);
   registerHandlers(bot);
+
+  // Let background ingestion (web or Telegram uploads) message users on completion.
+  setNotifier((userId, text) => bot.api.sendMessage(userId, text));
 
   bot.catch((err) => {
     log.error("Bot error", err.error instanceof Error ? err.error.message : err.error);
