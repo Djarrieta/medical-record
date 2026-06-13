@@ -27,6 +27,30 @@ docker compose up --build
 - Volume mount: `./data:/app/data` (persists SQLite, vectors, uploads, model cache)
 - Uses `node:22-slim` with `tesseract-ocr-spa` for OCR
 
+### Workflow & helper scripts (server)
+
+Development happens on a laptop; the app **runs on a home server** (`home-server`,
+repo at `/home/dario/medical-record`). Workflow: edit + commit + push on the
+laptop, then pull + redeploy on the server. Production always runs via Docker —
+do **not** use `npm run dev` on the server while the container is up (port 3003
+collides → `EADDRINUSE`).
+
+Bash helper scripts at the repo root (run on the server):
+
+| Script | What it does |
+|---|---|
+| `./start.sh` | Deploy latest: `git pull` → `docker compose up --build -d` → `docker compose ps`. Normal redeploy after a push. |
+| `./reset.sh` | **Destructive.** `docker compose down` → deletes `data/medical-record.sqlite*` (all stored docs/vectors) → `docker compose up -d`. Use only to wipe data. |
+
+Common server commands:
+
+```bash
+./start.sh                       # pull + rebuild + restart (preferred redeploy)
+docker compose logs -f           # follow logs
+docker compose ps                # container status
+docker compose down              # stop container (e.g. before host `npm run dev`)
+```
+
 ## Environment & secrets
 
 - `.env` contains secrets (Telegram token, DeepSeek key) — in `.gitignore`, never commit.
