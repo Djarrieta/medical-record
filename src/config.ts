@@ -1,6 +1,6 @@
 /**
- * Centralized configuration loaded from environment variables.
- * Bun loads `.env` natively. Validates required values and exposes a typed config.
+ * Centralized configuration loaded from environment variables (via dotenv).
+ * Validates required values and exposes a typed config.
  */
 
 function required(name: string): string {
@@ -65,8 +65,8 @@ export const config = {
   web: {
     enabled: optional("WEB_UI_ENABLED", "true") === "true",
     host: optional("WEB_HOST", "0.0.0.0"),
-    port: intOpt("WEB_PORT", 3002),
-    baseUrl: optional("WEB_BASE_URL", "http://localhost:3002"),
+    port: intOpt("WEB_PORT", 3003),
+    baseUrl: optional("WEB_BASE_URL", "http://localhost:3003"),
     uploadTokenTtlMin: intOpt("UPLOAD_TOKEN_TTL_MIN", 10),
   },
   storage: {
@@ -82,10 +82,3 @@ export const config = {
 
 export type AppConfig = typeof config;
 
-/** RAG tuning constants (kept here so they are easy to find/adjust). */
-export const rag = {
-  chunkTargetTokens: 350,
-  chunkOverlapTokens: 64,
-  maxChunkTokens: 480, // safety margin under the e5 512-token limit
-  topK: 6,
-} as const;

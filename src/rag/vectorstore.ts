@@ -21,7 +21,7 @@ export function upsertVectors(
 ): void {
   if (rows.length === 0) return;
   const db = getDb();
-  const stmt = db.query(
+  const stmt = db.prepare(
     `INSERT INTO vectors (chunk_id, user_id, embedding) VALUES (?, ?, ?)`,
   );
   const tx = db.transaction((items: typeof rows) => {
@@ -39,7 +39,7 @@ export function upsertVectors(
 export function search(userId: number, queryEmbedding: number[], k: number): ScoredChunk[] {
   const db = getDb();
   return db
-    .query<ScoredChunk, [string, number, number]>(
+    .prepare<[string, number, number], ScoredChunk>(
       `SELECT v.chunk_id        AS chunk_id,
               c.doc_id          AS doc_id,
               c.page            AS page,

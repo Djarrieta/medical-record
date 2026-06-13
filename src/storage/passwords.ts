@@ -16,7 +16,7 @@ export interface PasswordRow {
 
 export function addPassword(userId: number, password: string): boolean {
   const res = getDb()
-    .query(
+    .prepare(
       `INSERT INTO pdf_passwords (user_id, password, created_at) VALUES (?, ?, ?)
        ON CONFLICT(user_id, password) DO NOTHING`,
     )
@@ -26,7 +26,7 @@ export function addPassword(userId: number, password: string): boolean {
 
 export function deletePassword(userId: number, id: number): boolean {
   const res = getDb()
-    .query(`DELETE FROM pdf_passwords WHERE user_id = ? AND id = ?`)
+    .prepare(`DELETE FROM pdf_passwords WHERE user_id = ? AND id = ?`)
     .run(userId, id);
   return res.changes > 0;
 }
@@ -34,7 +34,7 @@ export function deletePassword(userId: number, id: number): boolean {
 /** Candidate passwords, most-recently-used first (best chance of an early hit). */
 export function listPasswords(userId: number): PasswordRow[] {
   return getDb()
-    .query<PasswordRow, [number]>(
+    .prepare<[number], PasswordRow>(
       `SELECT * FROM pdf_passwords WHERE user_id = ?
        ORDER BY (last_used_at IS NULL), last_used_at DESC, created_at DESC`,
     )
@@ -43,7 +43,7 @@ export function listPasswords(userId: number): PasswordRow[] {
 
 export function markPasswordUsed(userId: number, id: number): void {
   getDb()
-    .query(`UPDATE pdf_passwords SET last_used_at = ? WHERE user_id = ? AND id = ?`)
+    .prepare(`UPDATE pdf_passwords SET last_used_at = ? WHERE user_id = ? AND id = ?`)
     .run(Date.now(), userId, id);
 }
 

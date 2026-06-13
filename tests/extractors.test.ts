@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { extract } from "../src/ingestion/extractors.ts";
 import { isPasswordError, PdfLockedError } from "../src/ingestion/pdfUnlock.ts";
 

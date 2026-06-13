@@ -13,8 +13,8 @@ Personal medical-records assistant with two entry points:
 
 ```
 Web UI (LAN) ─┐                            ┌─ Telegram (long-polling)
-              ├─► Bun app (allowlist + consent) ─┤
-upload token ─┘        │                    └─ Q&A (RAG)
+               ├─► Node.js app (allowlist + consent) ─┤
+upload token ─┘        │                       └─ Q&A (RAG)
                        ▼
         ingestion: unlock → extract → OCR → chunk → embed (local)
                        ▼
@@ -23,11 +23,11 @@ upload token ─┘        │                    └─ Q&A (RAG)
 
 - **Embeddings** run locally (`transformers.js`, `multilingual-e5-small`, 384-dim, cosine).
 - **Q&A** uses DeepSeek (`deepseek-chat`, OpenAI-compatible). Only the retrieved snippets are sent.
-- **Storage** is one `bun:sqlite` DB (+ `sqlite-vec`), isolated per Telegram `user_id`.
+- **Storage** is one `better-sqlite3` DB (+ `sqlite-vec`), isolated per Telegram `user_id`.
 
 ## Requirements
 
-- [Bun](https://bun.sh) 1.x (local dev) or **Docker** + Docker Compose (recommended).
+- [Node.js](https://nodejs.org) 22+ (local dev) or **Docker** + Docker Compose (recommended).
 - A Telegram bot token from [@BotFather](https://t.me/BotFather).
 - A [DeepSeek API key](https://platform.deepseek.com).
 - For OCR outside Docker: Tesseract Spanish data is fetched by `tesseract.js` automatically; in
@@ -59,17 +59,17 @@ cache persist across restarts. The web UI is published on the **LAN only** (port
 ### Local dev
 
 ```bash
-bun install
-bun run dev      # watch mode
+npm install
+npm run dev      # watch mode
 # or
-bun run start
+npm run start
 ```
 
 ## Tests
 
 ```bash
-bun test
-bun run typecheck
+npm test
+npm run typecheck
 ```
 
 (Network-free tests cover chunking, extraction dispatch, and message splitting.)
