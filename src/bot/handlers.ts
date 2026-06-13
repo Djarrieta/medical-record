@@ -8,15 +8,12 @@ import { config } from "../config.ts";
 import { createLogger } from "../util/logger.ts";
 import { splitForTelegram } from "../util/telegram.ts";
 import { allow } from "../util/rateLimit.ts";
-import { consentKeyboard } from "./keyboards.ts";
-import { userHasConsent } from "./access.ts";
 import {
   audit,
   deleteDocument,
   ensureUser,
   listDocuments,
   resetUser,
-  setConsent,
 } from "../storage/db.ts";
 import {
   addPassword,
@@ -52,7 +49,7 @@ Este bot solo consulta *tus propios documentos médicos*. No da consejo ni inter
 
 *Contraseñas de PDF:*
   /passwords — ver contraseñas guardadas (enmascaradas)
-  /addpassword <clave> — añadir una contraseña para abrir PDFs cifrados
+  /addpassword <clave> — añadir contraseña(s) para abrir PDFs cifrados (puedes enviar varias, una por línea)
   /delpassword <id> — borrar una contraseña
 
   /privacy — qué datos se guardan`;
@@ -72,7 +69,7 @@ const WELCOME = `👋 *Bienvenido/a*
 Soy un bot para consultar *tus propios documentos médicos*. Reporto lo que dicen tus
 documentos (con fuentes) y *nunca* doy consejo, interpretación ni diagnóstico.
 
-Antes de empezar necesito tu consentimiento para almacenar y procesar los documentos que subas.`;
+Ya puedes subir documentos (/upload) y hacer preguntas. Escribe /help para ver todo.`;
 
 async function reply(ctx: Context, text: string): Promise<void> {
   for (const part of splitForTelegram(text)) {
@@ -80,46 +77,25 @@ async function reply(ctx: Context, text: string): Promise<void> {
   }
 }
 
-/** Require consent before document/Q&A actions. */
-async function ensureConsent(ctx: Context): Promise<boolean> {
-  const userId = ctx.from!.id;
-  ensureUser(userId);
-  if (userHasConsent(userId)) return true;
-  await ctx.reply(
-    "Primero necesito tu consentimiento. Usa /start y pulsa «Acepto».",
-  );
-  return false;
+/** Ensure the user row exists before document/Q&A actions. */
+async function ensureRegistered(ctx: Context): Promise<boolean> {
+  ensureUser(ctx.from!.id);
+  return true;
 }
 
 export function registerHandlers(bot: Bot): void {
   /* ------------------------------- /start ------------------------------- */
   bot.command("start", async (ctx) => {
     ensureUser(ctx.from!.id);
-    await ctx.reply(WELCOME, { parse_mode: "Markdown", reply_markup: consentKeyboard });
+    await ctx.reply(WELCOME, { parse_mode: "Markdown" });
   });
 
   bot.command("help", (ctx) => reply(ctx, HELP));
   bot.command("privacy", (ctx) => reply(ctx, PRIVACY));
 
-  /* ---------------------------- consent flow ---------------------------- */
-  bot.callbackQuery("consent:accept", async (ctx) => {
-    setConsent(ctx.from.id);
-    await ctx.answerCallbackQuery({ text: "¡Gracias!" });
-    await ctx.editMessageText(
-      "✅ Consentimiento registrado. Ya puedes subir documentos (/upload) y hacer preguntas.\nEscribe /help para ver todo.",
-    );
-  });
-
-  bot.callbackQuery("consent:decline", async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Entendido." });
-    await ctx.editMessageText(
-      "❌ Sin consentimiento no puedo almacenar ni procesar documentos. Usa /start cuando quieras aceptar.",
-    );
-  });
-
   /* ------------------------------- /upload ------------------------------ */
   bot.command("upload", async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
     if (!config.web.enabled) {
       await ctx.reply("La interfaz de subida web está desactivada en este servidor.");
       return;
@@ -134,7 +110,7 @@ export function registerHandlers(bot: Bot): void {
 
   /* ------------------------------ /addnote ------------------------------ */
   bot.command("addnote", async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
     const text = (ctx.match ?? "").toString().trim();
     if (!text) {
       await ctx.reply("Uso: /addnote <texto de la nota>");
@@ -150,7 +126,7 @@ export function registerHandlers(bot: Bot): void {
 
   /* ------------------------------- /list -------------------------------- */
   bot.command("list", async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
     const docs = listDocuments(ctx.from!.id);
     if (docs.length === 0) {
       await ctx.reply("No tienes documentos todavía. Usa /upload para añadir.");
@@ -172,7 +148,7 @@ export function registerHandlers(bot: Bot): void {
 
   /* ------------------------------ /delete ------------------------------- */
   bot.command("delete", async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
     const id = (ctx.match ?? "").toString().trim();
     if (!id) {
       await ctx.reply("Uso: /delete <id> (mira los ids con /list)");
@@ -184,14 +160,14 @@ export function registerHandlers(bot: Bot): void {
 
   /* ------------------------------- /reset ------------------------------- */
   bot.command("reset", async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
     resetUser(ctx.from!.id);
     await ctx.reply("🧹 Todos tus datos han sido borrados.");
   });
 
   /* ----------------------------- passwords ------------------------------ */
   bot.command("passwords", async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
     const rows = listPasswords(ctx.from!.id);
     if (rows.length === 0) {
       await ctx.reply("No tienes contraseñas guardadas. Añade con /addpassword <clave>.");
@@ -202,28 +178,45 @@ export function registerHandlers(bot: Bot): void {
   });
 
   bot.command("addpassword", async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
-    const pwd = (ctx.match ?? "").toString().trim();
-    // Delete the message containing the secret as soon as possible.
+    if (!(await ensureRegistered(ctx))) return;
+    const raw = (ctx.match ?? "").toString();
+    // Delete the message containing the secret(s) as soon as possible.
     try {
       await ctx.deleteMessage();
     } catch {
       /* ignore: may lack delete permission */
     }
-    if (!pwd) {
-      await ctx.reply("Uso: /addpassword <clave>");
+
+    // Accept several passwords at once: one per line.
+    const pwds = Array.from(
+      new Set(
+        raw
+          .split("\n")
+          .map((p) => p.trim())
+          .filter((p) => p.length > 0),
+      ),
+    );
+    if (pwds.length === 0) {
+      await ctx.reply(
+        "Uso: /addpassword <clave>\nPuedes enviar varias contraseñas, una por línea.",
+      );
       return;
     }
-    const added = addPassword(ctx.from!.id, pwd);
-    await ctx.reply(
-      added
-        ? "🔐 Contraseña guardada (y tu mensaje fue borrado por seguridad)."
-        : "Esa contraseña ya estaba guardada.",
-    );
+
+    let added = 0;
+    for (const pwd of pwds) {
+      if (addPassword(ctx.from!.id, pwd)) added += 1;
+    }
+    const duplicates = pwds.length - added;
+
+    const parts: string[] = [];
+    if (added > 0) parts.push(`🔐 ${added} contraseña(s) guardada(s)`);
+    if (duplicates > 0) parts.push(`${duplicates} ya estaba(n) guardada(s)`);
+    await ctx.reply(`${parts.join(" · ")} (tu mensaje fue borrado por seguridad).`);
   });
 
   bot.command("delpassword", async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
     const id = Number.parseInt((ctx.match ?? "").toString().trim(), 10);
     if (!Number.isFinite(id)) {
       await ctx.reply("Uso: /delpassword <id> (mira los ids con /passwords)");
@@ -235,7 +228,7 @@ export function registerHandlers(bot: Bot): void {
 
   /* --------------------------- file uploads ----------------------------- */
   bot.on(["message:document", "message:photo"], async (ctx) => {
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
 
     const doc = ctx.message?.document;
     const photo = ctx.message?.photo?.at(-1);
@@ -279,7 +272,7 @@ export function registerHandlers(bot: Bot): void {
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) return; // unknown command
-    if (!(await ensureConsent(ctx))) return;
+    if (!(await ensureRegistered(ctx))) return;
 
     if (!allow(ctx.from!.id, config.limits.qaPerHour)) {
       await ctx.reply("Has alcanzado el límite de preguntas por hora. Inténtalo más tarde.");

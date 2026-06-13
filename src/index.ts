@@ -32,7 +32,7 @@ async function main(): Promise<void> {
 
   // Set the visible command menu.
   await bot.api.setMyCommands([
-    { command: "start", description: "Iniciar y dar consentimiento" },
+    { command: "start", description: "Iniciar" },
     { command: "help", description: "Cómo usar el bot" },
     { command: "upload", description: "Enlace para subir documentos (LAN)" },
     { command: "addnote", description: "Guardar una nota escrita" },

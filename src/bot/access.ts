@@ -1,19 +1,13 @@
 /**
- * Access control: allowlist + consent (plan §1, §9).
+ * Access control: allowlist (plan §1, §9).
  */
 
 import type { Context } from "grammy";
 import { config } from "../config.ts";
-import { hasConsent } from "../storage/db.ts";
 
 /** True if the Telegram user is on the allowlist. */
 export function isAllowed(userId: number | undefined): boolean {
   return userId !== undefined && config.allowedUserIds.has(userId);
-}
-
-/** True if the user has granted consent. */
-export function userHasConsent(userId: number): boolean {
-  return hasConsent(userId);
 }
 
 const NOT_ALLOWED_MSG =
