@@ -94,7 +94,7 @@ async function pump(): Promise<void> {
   try {
     await processJob(job);
   } catch (err) {
-    log.error(`Ingestion failed for doc ${job.docId}`, (err as Error).message);
+    log.error(`Ingestion failed for doc ${job.docId}: ${(err as Error).message}`, (err as Error).stack);
     const message =
       err instanceof PdfLockedError
         ? err.message

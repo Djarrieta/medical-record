@@ -17,12 +17,12 @@
     "dotenv": "^17.4.2",
     "grammy": "^1.30.0",
     "hono": "^4.6.0",
-    "pdf-to-img": "^4.2.0",
+    "pdf-to-img": "^6.2.0",
     "sharp": "^0.33.5",
     "sqlite-vec": "^0.1.6",
     "tesseract.js": "^5.1.1",
     "tsx": "^4.19.0",
-    "unpdf": "^0.12.1"
+    "unpdf": "^1.6.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

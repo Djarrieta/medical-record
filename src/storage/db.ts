@@ -111,7 +111,7 @@ function migrate(database: Database.Database): void {
   database.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(
       chunk_id TEXT PRIMARY KEY,
-      user_id INTEGER,
+      user_id REAL,
       embedding FLOAT[${config.embeddings.dimension}] distance_metric=cosine
     );
   `);

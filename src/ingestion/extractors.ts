@@ -48,37 +48,74 @@ function isText(mime: string, filename: string): boolean {
   return mime.startsWith("text/") || /\.(txt|md|csv)$/i.test(filename);
 }
 
+async function extractNativeText(
+  data: Uint8Array,
+  openOpts: { password?: string } | undefined,
+): Promise<{ pages: SourceText[]; totalPages: number } | null> {
+  try {
+    const proxy = await getDocumentProxy(data, openOpts);
+    const { text, totalPages } = await extractPdfText(proxy, { mergePages: false });
+    const nativePages: string[] = Array.isArray(text) ? text : [text];
+
+    const pages: SourceText[] = [];
+    for (let i = 0; i < totalPages; i++) {
+      const pageText = (nativePages[i] ?? "").trim();
+      if (pageText.length >= MIN_NATIVE_CHARS_PER_PAGE) {
+        pages.push({ page: i + 1, text: pageText });
+      }
+    }
+    return { pages, totalPages };
+  } catch (err) {
+    log.warn(`Native text extraction failed, falling back to full OCR: ${(err as Error).message}`);
+    return null;
+  }
+}
+
 async function extractFromPdf(input: ExtractInput): Promise<ExtractResult> {
   const candidates = input.candidatePasswords ?? [];
-  const unlock: UnlockResult = await resolvePdfPassword(input.data, candidates);
+  // Copy the buffer before passing to unpdf — its bundled pdfjs may detach
+  // the underlying ArrayBuffer via postMessage transfer (causing "zero bytes").
+  const unlockData = input.data.slice();
+  const unlock: UnlockResult = await resolvePdfPassword(unlockData, candidates);
   const openOpts = unlock.password ? { password: unlock.password } : undefined;
 
-  // Native text first.
-  const proxy = await getDocumentProxy(input.data, openOpts);
-  const { text, totalPages } = await extractPdfText(proxy, { mergePages: false });
-  const nativePages: string[] = Array.isArray(text) ? text : [text];
+  const nativeData = input.data.slice();
+  const native = await extractNativeText(nativeData, openOpts);
 
   const pages: SourceText[] = [];
-  const pagesNeedingOcr: number[] = [];
+  let totalPages = 0;
 
-  for (let i = 0; i < totalPages; i++) {
-    const pageText = (nativePages[i] ?? "").trim();
-    if (pageText.length >= MIN_NATIVE_CHARS_PER_PAGE) {
-      pages.push({ page: i + 1, text: pageText });
-    } else {
-      pagesNeedingOcr.push(i + 1);
+  if (native) {
+    totalPages = native.totalPages;
+    const nativePageSet = new Set(native.pages.map((p) => p.page));
+    pages.push(...native.pages);
+
+    const pagesNeedingOcr = [];
+    for (let i = 1; i <= totalPages; i++) {
+      if (!nativePageSet.has(i)) pagesNeedingOcr.push(i);
     }
-  }
 
-  // Scanned / low-text pages: rasterize and OCR.
-  if (pagesNeedingOcr.length > 0) {
-    log.info(`OCR needed for ${pagesNeedingOcr.length}/${totalPages} page(s)`);
+    if (pagesNeedingOcr.length > 0) {
+      log.info(`OCR needed for ${pagesNeedingOcr.length}/${totalPages} page(s)`);
+      const images = await renderPdfToImages(input.data, {
+        password: unlock.password,
+      });
+      const needed = new Set(pagesNeedingOcr);
+      for (const { page, image } of images) {
+        if (!needed.has(page)) continue;
+        const ocrText = await ocrImage(image);
+        if (ocrText.trim().length > 0) {
+          pages.push({ page, text: ocrText });
+        }
+      }
+    }
+  } else {
+    // Native extraction failed — full OCR fallback.
     const images = await renderPdfToImages(input.data, {
       password: unlock.password,
     });
-    const needed = new Set(pagesNeedingOcr);
+    totalPages = images.length;
     for (const { page, image } of images) {
-      if (!needed.has(page)) continue;
       const ocrText = await ocrImage(image);
       if (ocrText.trim().length > 0) {
         pages.push({ page, text: ocrText });
