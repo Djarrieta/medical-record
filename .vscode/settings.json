@@ -1,0 +1,20 @@
+{
+  // Auto-approve every Copilot agent tool invocation (file edits, terminal
+  // commands, tasks, etc.) without prompting. Scoped to this workspace only.
+  "chat.tools.autoApprove": true,
+  "chat.tools.terminal.autoApprove": {
+    "nvm": true,
+    "/^nvm use 22\\.22\\.3; node --version$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^node --version$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^Get-Command node \\| Select-Object Source; echo \"NVM_SYMLINK=\\$env:NVM_SYMLINK\"; where\\.exe node$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  }
+}

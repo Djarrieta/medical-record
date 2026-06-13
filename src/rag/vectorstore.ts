@@ -24,9 +24,12 @@ export function upsertVectors(
   const stmt = db.prepare(
     `INSERT INTO vectors (chunk_id, user_id, embedding) VALUES (?, ?, ?)`,
   );
+  // better-sqlite3 binds plain JS numbers as FLOAT; sqlite-vec requires an
+  // INTEGER for the user_id metadata column, so bind it as a BigInt.
+  const userIdInt = BigInt(userId);
   const tx = db.transaction((items: typeof rows) => {
     for (const r of items) {
-      stmt.run(r.chunkId, userId, JSON.stringify(r.embedding));
+      stmt.run(r.chunkId, userIdInt, JSON.stringify(r.embedding));
     }
   });
   tx(rows);
@@ -39,7 +42,7 @@ export function upsertVectors(
 export function search(userId: number, queryEmbedding: number[], k: number): ScoredChunk[] {
   const db = getDb();
   return db
-    .prepare<[string, number, number], ScoredChunk>(
+    .prepare<[string, bigint, bigint], ScoredChunk>(
       `SELECT v.chunk_id        AS chunk_id,
               c.doc_id          AS doc_id,
               c.page            AS page,
@@ -54,5 +57,6 @@ export function search(userId: number, queryEmbedding: number[], k: number): Sco
           AND k = ?
         ORDER BY v.distance`,
     )
-    .all(JSON.stringify(queryEmbedding), userId, k);
+    // Bind user_id and k as BigInt so sqlite-vec receives INTEGER (not FLOAT).
+    .all(JSON.stringify(queryEmbedding), BigInt(userId), BigInt(k));
 }

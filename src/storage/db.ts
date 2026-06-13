@@ -108,10 +108,13 @@ function migrate(database: Database.Database): void {
   `);
 
   // Vector table (sqlite-vec). 384-dim float, cosine distance.
+  // user_id is an INTEGER metadata column; values must be bound as BigInt
+  // because better-sqlite3 binds plain JS numbers as FLOAT, which sqlite-vec
+  // rejects for strict integer metadata columns (see rag/vectorstore.ts).
   database.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(
       chunk_id TEXT PRIMARY KEY,
-      user_id REAL,
+      user_id INTEGER,
       embedding FLOAT[${config.embeddings.dimension}] distance_metric=cosine
     );
   `);
