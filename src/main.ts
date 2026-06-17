@@ -50,3 +50,18 @@ await qdrantStore.ensureCollection();
 console.log("Qdrant collection ready.");
 
 bot.start();
+
+const webPort = process.env.WEB_PORT;
+if (webPort) {
+  const { startWebServer } = await import("./webServer");
+  startWebServer({
+    port: parseInt(webPort, 10),
+    host: process.env.WEB_HOST ?? "0.0.0.0",
+    password: process.env.WEB_PASSWORD,
+    fileStore,
+    pdfExtractor,
+    embedder,
+    qdrantStore,
+    passwordStore,
+  });
+}

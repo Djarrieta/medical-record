@@ -15,6 +15,7 @@
 | Stop containers | `./stop.sh` — `sudo docker compose down` |
 | Reset all data | `./reset.sh` — stops containers, deletes DB/files/Qdrant/models, rebuilds |
 
+- **Web UI**: if `WEB_PORT` is set, a web interface starts on `http://<host>:<port>` for drag-and-drop file upload (bypasses Telegram's 50MB limit). Password-protected if `WEB_PASSWORD` is set.
 - **No test suite.** Validate changes with `bun run typeCheck`.
 - **Reset DB**: when the user says "reestablece la base de datos", "resetea los datos", "limpia los datos" or similar, run `./reset.sh`.
 
@@ -23,6 +24,7 @@
 - **`.env` contains bot token and API keys** — in `.gitignore`, never commit.
 - `.env.example` shows the schema: `BOT_TOKEN`, `ALLOWED_USER_ID`, `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL`, `DATA_DIR`, `QDRANT_URL`, `EMBEDDING_MODEL`.
 - `DEEPSEEK_API_KEY` is optional — without it `/ask` returns an error but file upload/download work.
+- `WEB_PORT`, `WEB_HOST`, `WEB_PASSWORD` configure the optional web UI for file upload.
 
 ## Architecture
 

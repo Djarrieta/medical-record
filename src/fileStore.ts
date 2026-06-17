@@ -56,6 +56,37 @@ export class FileStore {
     return record;
   }
 
+  async saveStream(
+    userId: number,
+    originalName: string,
+    mimeType: string,
+    stream: ReadableStream,
+  ): Promise<FileRecord> {
+    const id = crypto.randomUUID();
+    const ext = extname(originalName);
+    const fileName = `${id}${ext}`;
+    const filePath = join(this.filesDir, fileName);
+
+    const written = await Bun.write(filePath, new Response(stream));
+
+    const record: FileRecord = {
+      id,
+      userId,
+      originalName,
+      mimeType,
+      size: written,
+      path: filePath,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.db.run(
+      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt],
+    );
+
+    return record;
+  }
+
   list(): FileRecord[] {
     return this.db
       .query("SELECT * FROM files ORDER BY created_at DESC")
