@@ -4,3 +4,4 @@ data/*
 !data/files/.gitkeep
 data/qdrant/
 data/models/
+bot.log
