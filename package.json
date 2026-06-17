@@ -1,0 +1,20 @@
+{
+  "name": "medicar-records-2",
+  "version": "0.1.0",
+  "private": true,
+  "module": "src/main.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "typeCheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@langchain/openai": "1.4.5",
+    "grammy": "1.30.0",
+    "langchain": "1.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "5"
+  }
+}
