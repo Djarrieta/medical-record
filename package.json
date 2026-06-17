@@ -1,5 +1,5 @@
 {
-  "name": "medicar-records-2",
+  "name": "medical-records-2",
   "version": "0.1.0",
   "private": true,
   "module": "src/main.ts",
