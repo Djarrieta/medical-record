@@ -5,16 +5,18 @@ import type { QdrantStore } from "./vectorStore";
 import type { ChatOpenAI } from "@langchain/openai";
 
 const PROMPT_TEMPLATE = `
-Eres un asistente médico que responde preguntas basado en documentos clínicos.
-Usa SOLO el contexto proporcionado para responder. Si no encuentras la respuesta en el contexto, di que no tienes esa información.
-Menciona siempre el nombre del archivo de origen al final de tu respuesta.
+Eres un asistente médico amable que responde preguntas basado en documentos clínicos.
+Usa SOLO el contexto proporcionado para responder. Si no encuentras la respuesta en el contexto, di amablemente que no tienes esa información.
+Responde en español, con un tono amigable y conversacional, como hablando con un paciente.
+NO uses formato markdown (negritas, itálicas, listas con guiones, etc.). Usa texto plano solamente.
+Menciona el nombre del archivo de origen de forma natural en la conversación.
 
 Contexto:
 {context}
 
 Pregunta: {question}
 
-Responde de manera clara y concisa en español:`;
+Respuesta:`;
 
 export class RagService {
   private llm: ChatOpenAI;
@@ -61,7 +63,7 @@ export class RagService {
 
     const sources = Array.from(sourceMap.entries())
       .sort((a, b) => b[1].score - a[1].score)
-      .map(([name]) => `📄 ${name}`)
+      .map(([name]) => `- ${name}`)
       .join("\n");
 
     const context = docs
@@ -72,6 +74,6 @@ export class RagService {
     const chain = prompt.pipe(this.llm);
     const response = await chain.invoke({ context, question });
 
-    return `${response.text}\n\n---\n**Fuentes:**\n${sources}`;
+    return `${response.text}\n\n---\nFuentes:\n${sources}`;
   }
 }
