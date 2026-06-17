@@ -9,9 +9,13 @@
     "typeCheck": "bunx tsc --noEmit"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@langchain/openai": "1.4.5",
+    "@langchain/textsplitters": "^1.0.1",
+    "@qdrant/js-client-rest": "^1.18.0",
     "grammy": "1.30.0",
-    "langchain": "1.4.0"
+    "langchain": "1.4.0",
+    "unpdf": "^1.6.2"
   },
   "devDependencies": {
     "@types/bun": "latest",

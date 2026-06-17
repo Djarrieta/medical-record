@@ -1,15 +1,35 @@
 import { Bot, InputFile } from "grammy";
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import type { BotConfig } from "./types";
 import type { FileStore } from "./fileStore";
+import type { PdfExtractor } from "./pdfExtractor";
+import type { EmbeddingProvider } from "./embedding";
+import type { QdrantStore } from "./vectorStore";
+import type { RagService } from "./rag";
 
 export class BotApp {
   private bot: Bot;
   private config: BotConfig;
   private fileStore: FileStore;
+  private pdfExtractor: PdfExtractor | null;
+  private embedder: EmbeddingProvider | null;
+  private qdrantStore: QdrantStore | null;
+  private ragService: RagService | null;
 
-  constructor(config: BotConfig, fileStore: FileStore) {
+  constructor(
+    config: BotConfig,
+    fileStore: FileStore,
+    pdfExtractor: PdfExtractor | null = null,
+    embedder: EmbeddingProvider | null = null,
+    qdrantStore: QdrantStore | null = null,
+    ragService: RagService | null = null,
+  ) {
     this.config = config;
     this.fileStore = fileStore;
+    this.pdfExtractor = pdfExtractor;
+    this.embedder = embedder;
+    this.qdrantStore = qdrantStore;
+    this.ragService = ragService;
     this.bot = new Bot(config.botToken);
     this.registerMiddlewares();
     this.registerHandlers();
@@ -33,12 +53,13 @@ export class BotApp {
     this.bot.command("start", (ctx) =>
       ctx.reply(
         "👋 Bienvenido a Medicar Records 2\n\n" +
-          "Envíame un archivo o foto para guardarlo.\n\n" +
+          "Envíame un PDF para guardarlo e indexarlo.\n\n" +
           "Comandos:\n" +
           "/list — Lista tus archivos guardados\n" +
           "/get <id> — Descarga un archivo\n" +
           "/delete <id> — Elimina un archivo\n" +
-          "/note <texto> — Guarda una nota de texto",
+          "/note <texto> — Guarda una nota de texto\n" +
+          "/ask <pregunta> — Pregunta sobre tus documentos",
       ),
     );
 
@@ -50,17 +71,38 @@ export class BotApp {
         const res = await fetch(url);
         const buffer = Buffer.from(await res.arrayBuffer());
 
+        const mimeType = doc.mime_type ?? "application/octet-stream";
         const record = this.fileStore.save(
           ctx.from!.id,
           doc.file_name ?? "unknown",
-          doc.mime_type ?? "application/octet-stream",
+          mimeType,
           buffer,
         );
 
-        await ctx.reply(
-          `✅ Guardado: ${doc.file_name}\nID: \`${record.id}\``,
-          { parse_mode: "Markdown" },
-        );
+        if (mimeType === "application/pdf" && this.pdfExtractor && this.embedder && this.qdrantStore) {
+          await ctx.reply(
+            `✅ Guardado: ${doc.file_name}\nID: \`${record.id}\`\n⏳ Extrayendo texto e indexando...`,
+            { parse_mode: "Markdown" },
+          );
+
+          const text = await this.pdfExtractor.extract(buffer);
+          const splitter = new RecursiveCharacterTextSplitter({
+            chunkSize: 1000,
+            chunkOverlap: 200,
+          });
+          const chunks = await splitter.splitText(text);
+          const vectors = await this.embedder.embed(chunks);
+          await this.qdrantStore.index(chunks, vectors);
+
+          await ctx.reply(
+            `📄 PDF indexado: ${chunks.length} fragmentos`,
+          );
+        } else {
+          await ctx.reply(
+            `✅ Guardado: ${doc.file_name}\nID: \`${record.id}\``,
+            { parse_mode: "Markdown" },
+          );
+        }
       } catch (error) {
         await ctx.reply("❌ Error al guardar el archivo");
         console.error("File save error:", error);
@@ -172,6 +214,28 @@ export class BotApp {
         `📝 Nota guardada\nID: \`${record.id}\``,
         { parse_mode: "Markdown" },
       );
+    });
+
+    this.bot.command("ask", async (ctx) => {
+      const question = ctx.match?.trim();
+      if (!question) {
+        await ctx.reply("Usa: /ask <pregunta>");
+        return;
+      }
+
+      if (!this.ragService) {
+        await ctx.reply("❌ El sistema de Q&A no está disponible (faltan credenciales de DeepSeek).");
+        return;
+      }
+
+      await ctx.reply("🔍 Buscando en tus documentos...");
+      try {
+        const answer = await this.ragService.answer(question);
+        await ctx.reply(answer);
+      } catch (error) {
+        await ctx.reply("❌ Error al procesar la pregunta.");
+        console.error("Ask error:", error);
+      }
     });
 
     this.bot.on(":text", async (ctx) => {

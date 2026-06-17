@@ -15,4 +15,6 @@ export interface BotConfig {
   deepseekModel: string;
   deepseekBaseUrl: string;
   dataDir: string;
+  qdrantUrl: string;
+  embeddingModel: string;
 }

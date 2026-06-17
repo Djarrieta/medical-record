@@ -17,6 +17,8 @@ export class Config {
       deepseekModel: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
       deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
       dataDir: process.env.DATA_DIR ?? "./data",
+      qdrantUrl: process.env.QDRANT_URL ?? "http://localhost:6333",
+      embeddingModel: process.env.EMBEDDING_MODEL ?? "Xenova/multilingual-e5-small",
     };
   }
 }
