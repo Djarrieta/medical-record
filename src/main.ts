@@ -9,10 +9,12 @@ import { PdfExtractor } from "./pdfExtractor";
 import { EmbeddingProvider } from "./embedding";
 import { QdrantStore } from "./vectorStore";
 import { RagService } from "./rag";
+import { PasswordStore } from "./passwordStore";
 
 const config = new Config();
 const fileStore = new FileStore(config.botConfig.dataDir);
 const pdfExtractor = new PdfExtractor();
+const passwordStore = new PasswordStore(config.botConfig.dataDir);
 
 const modelsDir = join(config.botConfig.dataDir, "models");
 if (!existsSync(modelsDir)) mkdirSync(modelsDir, { recursive: true });
@@ -27,7 +29,7 @@ if (config.botConfig.deepseekApiKey) {
   ragService = new RagService(llm, embedder, qdrantStore);
 }
 
-const bot = new BotApp(config.botConfig, fileStore, pdfExtractor, embedder, qdrantStore, ragService);
+const bot = new BotApp(config.botConfig, fileStore, pdfExtractor, embedder, qdrantStore, ragService, passwordStore);
 
 process.on("SIGINT", async () => {
   await bot.stop();

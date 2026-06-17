@@ -1,11 +1,12 @@
 import { Bot } from "grammy";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import type { BotConfig } from "./types";
+import type { BotConfig, PendingPassword } from "./types";
 import type { FileStore } from "./fileStore";
 import type { PdfExtractor } from "./pdfExtractor";
 import type { EmbeddingProvider } from "./embedding";
 import type { QdrantStore } from "./vectorStore";
 import type { RagService } from "./rag";
+import type { PasswordStore } from "./passwordStore";
 
 export class BotApp {
   private bot: Bot;
@@ -15,6 +16,8 @@ export class BotApp {
   private embedder: EmbeddingProvider | null;
   private qdrantStore: QdrantStore | null;
   private ragService: RagService | null;
+  private passwordStore: PasswordStore | null;
+  private pendingPasswords: Map<number, PendingPassword>;
 
   constructor(
     config: BotConfig,
@@ -23,6 +26,7 @@ export class BotApp {
     embedder: EmbeddingProvider | null = null,
     qdrantStore: QdrantStore | null = null,
     ragService: RagService | null = null,
+    passwordStore: PasswordStore | null = null,
   ) {
     this.config = config;
     this.fileStore = fileStore;
@@ -30,6 +34,8 @@ export class BotApp {
     this.embedder = embedder;
     this.qdrantStore = qdrantStore;
     this.ragService = ragService;
+    this.passwordStore = passwordStore;
+    this.pendingPasswords = new Map();
     this.bot = new Bot(config.botToken);
     this.registerMiddlewares();
     this.registerHandlers();
@@ -47,6 +53,26 @@ export class BotApp {
     this.bot.catch((err) => {
       console.error("Bot error:", err);
     });
+  }
+
+  private async processPdf(
+    buffer: Buffer,
+    recordId: string,
+    fileName: string,
+    password?: string,
+  ): Promise<void> {
+    if (!this.pdfExtractor || !this.embedder || !this.qdrantStore) return;
+
+    const text = await this.pdfExtractor.tryExtract(buffer, password);
+    if (text === null) return;
+
+    const splitter = new RecursiveCharacterTextSplitter({
+      chunkSize: 1000,
+      chunkOverlap: 200,
+    });
+    const chunks = await splitter.splitText(text);
+    const vectors = await this.embedder.embed(chunks);
+    await this.qdrantStore.index(chunks, vectors, recordId, fileName);
   }
 
   private registerHandlers(): void {
@@ -73,26 +99,40 @@ export class BotApp {
           buffer,
         );
 
-        if (mimeType === "application/pdf" && this.pdfExtractor && this.embedder && this.qdrantStore) {
+        if (mimeType !== "application/pdf" || !this.pdfExtractor || !this.embedder || !this.qdrantStore) {
+          await ctx.reply(`✅ Archivo guardado: ${doc.file_name}`);
+          return;
+        }
+
+        const text = await this.pdfExtractor.tryExtract(buffer);
+        if (text !== null) {
           await ctx.reply(
             `✅ Guardado: ${doc.file_name}\n⏳ Analizando e indexando...`,
           );
-
-          const text = await this.pdfExtractor.extract(buffer);
-          const splitter = new RecursiveCharacterTextSplitter({
-            chunkSize: 1000,
-            chunkOverlap: 200,
-          });
-          const chunks = await splitter.splitText(text);
-          const vectors = await this.embedder.embed(chunks);
-          await this.qdrantStore.index(chunks, vectors, record.id, doc.file_name ?? "unknown");
-
-          await ctx.reply(
-            `📄 PDF analizado: ${chunks.length} fragmentos indexados`,
-          );
-        } else {
-          await ctx.reply(`✅ Archivo guardado: ${doc.file_name}`);
+          await this.processPdf(buffer, record.id, doc.file_name ?? "unknown");
+          await ctx.reply(`📄 PDF analizado: indexado`);
+          return;
         }
+
+        if (this.passwordStore) {
+          const passwords = this.passwordStore.getAll();
+          for (const pw of passwords) {
+            const unlocked = await this.pdfExtractor.tryExtract(buffer, pw);
+            if (unlocked !== null) {
+              await ctx.reply(
+                `✅ Guardado: ${doc.file_name}\n⏳ Analizando e indexando...`,
+              );
+              await this.processPdf(buffer, record.id, doc.file_name ?? "unknown", pw);
+              await ctx.reply(`📄 PDF analizado: indexado`);
+              return;
+            }
+          }
+        }
+
+        this.pendingPasswords.set(ctx.from!.id, { recordId: record.id, fileName: doc.file_name ?? "unknown" });
+        await ctx.reply(
+          `🔒 PDF protegido: ${doc.file_name}\nEscribe la contraseña:`,
+        );
       } catch (error) {
         await ctx.reply("❌ Error al guardar el archivo");
         console.error("File save error:", error);
@@ -125,6 +165,29 @@ export class BotApp {
     this.bot.on(":text", async (ctx) => {
       const text = ctx.message?.text;
       if (!text || text.startsWith("/")) return;
+
+      const pending = this.pendingPasswords.get(ctx.from!.id);
+      if (pending && this.pdfExtractor && this.embedder && this.qdrantStore) {
+        const record = this.fileStore.get(pending.recordId);
+        if (!record) {
+          this.pendingPasswords.delete(ctx.from!.id);
+          await ctx.reply("❌ El archivo ya no existe.");
+          return;
+        }
+
+        const fileBuffer = Buffer.from(await Bun.file(record.path).arrayBuffer());
+        const unlocked = await this.pdfExtractor.tryExtract(fileBuffer, text);
+        if (unlocked !== null) {
+          this.passwordStore?.add(text);
+          this.pendingPasswords.delete(ctx.from!.id);
+          await ctx.reply(`🔓 Desbloqueado. Indexando...`);
+          await this.processPdf(fileBuffer, pending.recordId, pending.fileName, text);
+          await ctx.reply(`📄 PDF analizado e indexado`);
+        } else {
+          await ctx.reply("❌ Contraseña incorrecta, intenta de nuevo:");
+        }
+        return;
+      }
 
       if (!this.ragService) {
         await ctx.reply("❌ El sistema de análisis no está disponible.");

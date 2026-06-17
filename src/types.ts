@@ -1,3 +1,8 @@
+export interface PendingPassword {
+  recordId: string;
+  fileName: string;
+}
+
 export interface FileRecord {
   id: string;
   userId: number;

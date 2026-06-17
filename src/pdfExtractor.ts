@@ -1,8 +1,23 @@
-import { extractText } from "unpdf";
+import { extractText, getDocumentProxy } from "unpdf";
 
 export class PdfExtractor {
   async extract(buffer: Buffer): Promise<string> {
-    const { text } = await extractText(new Uint8Array(buffer));
-    return Array.isArray(text) ? text.join("\n\n") : text;
+    const result = await this.tryExtract(buffer);
+    if (result === null) throw new Error("PDF requires password");
+    return result;
+  }
+
+  async tryExtract(buffer: Buffer, password?: string): Promise<string | null> {
+    try {
+      const data = new Uint8Array(buffer);
+      const proxy = password
+        ? await getDocumentProxy(data, { password })
+        : await getDocumentProxy(data);
+      const { text } = await extractText(proxy);
+      return Array.isArray(text) ? text.join("\n\n") : text;
+    } catch (e: any) {
+      if (e?.name === "PasswordException") return null;
+      throw e;
+    }
   }
 }
