@@ -11,13 +11,18 @@
 |---|---|
 | Start bot | `bun start` (runs `src/main.ts`) |
 | Typecheck | `bun run typeCheck` (`bunx tsc --noEmit`) |
+| Start containers | `./start.sh` — `sudo docker compose up -d --build` |
+| Stop containers | `./stop.sh` — `sudo docker compose down` |
+| Reset all data | `./reset.sh` — stops containers, deletes DB/files/Qdrant/models, rebuilds |
 
-- **No test suite exists.** Zero test files. Validate changes with `bun run typeCheck`.
+- **No test suite.** Validate changes with `bun run typeCheck`.
+- **Reset DB**: when the user says "reestablece la base de datos", "resetea los datos", "limpia los datos" or similar, run `./reset.sh`.
 
 ## Environment & secrets
 
 - **`.env` contains bot token and API keys** — in `.gitignore`, never commit.
-- `.env.example` shows the schema: `BOT_TOKEN`, `ALLOWED_USER_ID`, `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL`, `DATA_DIR`.
+- `.env.example` shows the schema: `BOT_TOKEN`, `ALLOWED_USER_ID`, `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL`, `DATA_DIR`, `QDRANT_URL`, `EMBEDDING_MODEL`.
+- `DEEPSEEK_API_KEY` is optional — without it `/ask` returns an error but file upload/download work.
 
 ## Architecture
 
@@ -25,53 +30,45 @@
 - **Bot framework**: grammY v1 — `BotApp` class in `src/bot.ts`.
 - **LLM**: LangChain `ChatOpenAI` via DeepSeek-compatible API — `LlmProvider` singleton in `src/llm.ts`.
 - **File storage**: `FileStore` in `src/fileStore.ts` — saves files to `data/files/`, metadata in SQLite at `data/metadata.db` via `bun:sqlite` (WAL mode).
-- **Config**: `Config` class in `src/config.ts` — typed config from env vars.
-- **Types**: `BotConfig`, `FileRecord` interfaces in `src/types.ts`.
+- **PDF extraction**: `PdfExtractor` in `src/pdfExtractor.ts` — uses `unpdf`.
+- **Embeddings**: `EmbeddingProvider` in `src/embedding.ts` — Transformers.js (`Xenova/multilingual-e5-small`, 384-dim), model cached in `data/models/`.
+- **Vector DB**: `QdrantStore` in `src/vectorStore.ts` — Qdrant client, collection `documents`, Cosine distance.
+- **RAG**: `RagService` in `src/rag.ts` — retrieves top-5 chunks via embedding + Qdrant, answers with DeepSeek.
+
+## Docker
+
+- **Two containers**: `app` (bot) + `qdrant` (vector DB, port 6333).
+- Qdrant is a required dependency — the bot won't start without it.
+- `docker-compose.yml` mounts `./data` into both containers (bot uses `data/files`, `data/models`, `data/metadata.db`; Qdrant uses `data/qdrant/`).
+- `TZ=America/Bogota` in Dockerfile.
+
+## Telegram bot commands
+
+| Command | Location | Notes |
+|---|---|---|
+| `/start` | `src/bot.ts:53` | Welcome message |
+| Send PDF/document | `src/bot.ts:66` | Saves + indexes via PDF→embed→Qdrant pipeline |
+| Send photo | `src/bot.ts:112` | Saves as JPEG |
+| `/list` | `src/bot.ts:138` | Paginated (40 per message) |
+| `/get <id>` | `src/bot.ts:157` | Downloads file |
+| `/delete <id>` | `src/bot.ts:180` | Deletes file + disk |
+| `/note <text>` | `src/bot.ts:198` | Saves text as `.txt` file |
+| `/ask <question>` | `src/bot.ts:219` | RAG query — requires `DEEPSEEK_API_KEY` |
+
+- Single-user: only `ALLOWED_USER_ID` passes the middleware (`src/bot.ts:39`).
 
 ## Data persistence
 
 - SQLite at `./data/metadata.db` (WAL mode, auto-created).
 - Table: `files` — 7 columns (id, user_id, original_name, mime_type, size, path, created_at).
-- Files stored on disk at `./data/files/<uuid>.<ext>`.
+- Files at `./data/files/<uuid>.<ext>`.
+- Qdrant vector index at `./data/qdrant/`.
+- Model cache at `./data/models/`.
 - `.gitignore` covers `data/*` except `data/files/.gitkeep`.
-
-## Telegram bot commands
-
-| Command | Handler location |
-|---|---|
-| `/start` | `src/bot.ts:33` |
-| `/list` | `src/bot.ts:96` |
-| `/get <id>` | `src/bot.ts:115` |
-| `/delete <id>` | `src/bot.ts:138` |
-| `/note <text>` | `src/bot.ts:156` |
-| `:document` | `src/bot.ts:45` |
-| `:photo` | `src/bot.ts:70` |
-
-- Unauthorized users (not `ALLOWED_USER_ID`) get rejected at middleware (`src/bot.ts:19`).
-- Bot catches errors globally via `bot.catch()` at `src/bot.ts:27`.
 
 ## Key patterns
 
-- `LlmProvider` is a singleton — call `LlmProvider.getInstance(config)` to get the `ChatOpenAI` instance. Do NOT instantiate multiple LLM clients.
-- `FileStore` writes files to disk and SQLite atomically within one method (`save`).
+- `LlmProvider` is a singleton — call `LlmProvider.getInstance(config)`. Do NOT instantiate multiple LangChain clients.
+- `EmbeddingProvider.initialize()` must be called before `embed()`/`embedQuery()` — happens once at startup in `main.ts:43`.
+- Qdrant collection auto-created on first `ensureCollection()` call.
 - Signal handling in `main.ts`: SIGINT/SIGTERM stop the bot gracefully.
-
-## Future (planned)
-
-Plan at [`PLAN.md`](PLAN.md) covers the PDF → Vector DB → RAG pipeline:
-- PDF extraction via `unpdf`
-- Vector DB via Qdrant (Docker, port 6333)
-- Embeddings via Transformers.js (`Xenova/multilingual-e5-small`, 384-dim)
-- RAG with DeepSeek for answer generation
-
-## GitHub
-
-- Username: **Djarrieta**
-- Repo: `Djarrieta/medical-records-2` at `/home/dario/medical-records-2`
-- Sibling repo: `Djarrieta/medical-record` (older version) at `/home/dario/medical-record`
-
-## Server services
-
-| Service | Container | Access | Details |
-|---|---|---|---|
-| **Medical Record Bot v1** | `medical-record-bot` | `http://REDACTED-HOST:3003` (Docker) | Older version at `/home/dario/medical-record` |

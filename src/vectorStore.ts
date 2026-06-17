@@ -3,6 +3,12 @@ import { QdrantClient } from "@qdrant/js-client-rest";
 const COLLECTION = "documents";
 const VECTOR_SIZE = 384;
 
+export interface ChunkMetadata {
+  text: string;
+  fileId: string;
+  fileName: string;
+}
+
 export class QdrantStore {
   private client: QdrantClient;
   private ready = false;
@@ -23,12 +29,17 @@ export class QdrantStore {
     this.ready = true;
   }
 
-  async index(chunks: string[], vectors: number[][]): Promise<void> {
+  async index(
+    chunks: string[],
+    vectors: number[][],
+    fileId: string,
+    fileName: string,
+  ): Promise<void> {
     await this.ensureCollection();
     const points = chunks.map((chunk, i) => ({
       id: crypto.randomUUID(),
       vector: vectors[i],
-      payload: { text: chunk },
+      payload: { text: chunk, fileId, fileName } satisfies ChunkMetadata,
     }));
     await this.client.upsert(COLLECTION, { points });
   }
@@ -36,7 +47,7 @@ export class QdrantStore {
   async search(
     vector: number[],
     topK = 5,
-  ): Promise<{ text: string; score: number }[]> {
+  ): Promise<(ChunkMetadata & { score: number })[]> {
     await this.ensureCollection();
     const result = await this.client.search(COLLECTION, {
       vector,
@@ -44,8 +55,17 @@ export class QdrantStore {
       with_payload: true,
     });
     return result.map((r) => ({
-      text: (r.payload as { text: string }).text,
+      ...(r.payload as unknown as ChunkMetadata),
       score: r.score ?? 0,
     }));
+  }
+
+  async deleteByFileId(fileId: string): Promise<void> {
+    await this.ensureCollection();
+    await this.client.delete(COLLECTION, {
+      filter: {
+        must: [{ key: "fileId", match: { value: fileId } }],
+      },
+    });
   }
 }

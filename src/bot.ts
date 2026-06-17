@@ -1,4 +1,4 @@
-import { Bot, InputFile } from "grammy";
+import { Bot } from "grammy";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import type { BotConfig } from "./types";
 import type { FileStore } from "./fileStore";
@@ -53,13 +53,7 @@ export class BotApp {
     this.bot.command("start", (ctx) =>
       ctx.reply(
         "👋 Bienvenido a Medicar Records 2\n\n" +
-          "Envíame un PDF para guardarlo e indexarlo.\n\n" +
-          "Comandos:\n" +
-          "/list — Lista tus archivos guardados\n" +
-          "/get <id> — Descarga un archivo\n" +
-          "/delete <id> — Elimina un archivo\n" +
-          "/note <texto> — Guarda una nota de texto\n" +
-          "/ask <pregunta> — Pregunta sobre tus documentos",
+          "Envíame un PDF, una foto, o simplemente haz una pregunta.",
       ),
     );
 
@@ -81,8 +75,7 @@ export class BotApp {
 
         if (mimeType === "application/pdf" && this.pdfExtractor && this.embedder && this.qdrantStore) {
           await ctx.reply(
-            `✅ Guardado: ${doc.file_name}\nID: \`${record.id}\`\n⏳ Extrayendo texto e indexando...`,
-            { parse_mode: "Markdown" },
+            `✅ Guardado: ${doc.file_name}\n⏳ Analizando e indexando...`,
           );
 
           const text = await this.pdfExtractor.extract(buffer);
@@ -92,16 +85,13 @@ export class BotApp {
           });
           const chunks = await splitter.splitText(text);
           const vectors = await this.embedder.embed(chunks);
-          await this.qdrantStore.index(chunks, vectors);
+          await this.qdrantStore.index(chunks, vectors, record.id, doc.file_name ?? "unknown");
 
           await ctx.reply(
-            `📄 PDF indexado: ${chunks.length} fragmentos`,
+            `📄 PDF analizado: ${chunks.length} fragmentos indexados`,
           );
         } else {
-          await ctx.reply(
-            `✅ Guardado: ${doc.file_name}\nID: \`${record.id}\``,
-            { parse_mode: "Markdown" },
-          );
+          await ctx.reply(`✅ Archivo guardado: ${doc.file_name}`);
         }
       } catch (error) {
         await ctx.reply("❌ Error al guardar el archivo");
@@ -118,131 +108,36 @@ export class BotApp {
         const res = await fetch(url);
         const buffer = Buffer.from(await res.arrayBuffer());
 
-        const record = this.fileStore.save(
+        this.fileStore.save(
           ctx.from!.id,
           `photo_${largest.file_unique_id}.jpg`,
           "image/jpeg",
           buffer,
         );
 
-        await ctx.reply(
-          `✅ Foto guardada\nID: \`${record.id}\``,
-          { parse_mode: "Markdown" },
-        );
+        await ctx.reply("✅ Foto guardada");
       } catch (error) {
         await ctx.reply("❌ Error al guardar la foto");
         console.error("Photo save error:", error);
       }
     });
 
-    this.bot.command("list", async (ctx) => {
-      const files = this.fileStore.list();
-      if (files.length === 0) {
-        await ctx.reply("📂 No hay archivos guardados.");
-        return;
-      }
-
-      const lines = files.map((f, i) =>
-        `${i + 1}. \`${f.id}\` — ${f.originalName} (${formatSize(f.size)})`,
-      );
-
-      const chunks = chunkLines(lines, 40);
-      for (const chunk of chunks) {
-        await ctx.reply(`📂 Archivos guardados:\n\n${chunk}`, {
-          parse_mode: "Markdown",
-        });
-      }
-    });
-
-    this.bot.command("get", async (ctx) => {
-      const id = ctx.match?.trim();
-      if (!id) {
-        await ctx.reply("Usa: /get <id>");
-        return;
-      }
-
-      const record = this.fileStore.get(id);
-      if (!record) {
-        await ctx.reply("❌ Archivo no encontrado.");
-        return;
-      }
-
-      try {
-        const buffer = await Bun.file(record.path).arrayBuffer();
-        await ctx.replyWithDocument(
-          new InputFile(Buffer.from(buffer), record.originalName),
-        );
-      } catch {
-        await ctx.reply("❌ Error al leer el archivo del disco.");
-      }
-    });
-
-    this.bot.command("delete", async (ctx) => {
-      const id = ctx.match?.trim();
-      if (!id) {
-        await ctx.reply("Usa: /delete <id>");
-        return;
-      }
-
-      const deleted = this.fileStore.delete(id);
-      if (!deleted) {
-        await ctx.reply("❌ Archivo no encontrado.");
-        return;
-      }
-
-      await ctx.reply(`🗑️ Archivo \`${id}\` eliminado.`, {
-        parse_mode: "Markdown",
-      });
-    });
-
-    this.bot.command("note", async (ctx) => {
-      const text = ctx.match?.trim();
-      if (!text) {
-        await ctx.reply("Usa: /note <texto>");
-        return;
-      }
-
-      const buffer = Buffer.from(text, "utf-8");
-      const record = this.fileStore.save(
-        ctx.from!.id,
-        `note_${recordId()}.txt`,
-        "text/plain",
-        buffer,
-      );
-
-      await ctx.reply(
-        `📝 Nota guardada\nID: \`${record.id}\``,
-        { parse_mode: "Markdown" },
-      );
-    });
-
-    this.bot.command("ask", async (ctx) => {
-      const question = ctx.match?.trim();
-      if (!question) {
-        await ctx.reply("Usa: /ask <pregunta>");
-        return;
-      }
+    this.bot.on(":text", async (ctx) => {
+      const text = ctx.message?.text;
+      if (!text || text.startsWith("/")) return;
 
       if (!this.ragService) {
-        await ctx.reply("❌ El sistema de Q&A no está disponible (faltan credenciales de DeepSeek).");
+        await ctx.reply("❌ El sistema de análisis no está disponible.");
         return;
       }
 
-      await ctx.reply("🔍 Buscando en tus documentos...");
+      await ctx.reply("🔍 Analizando...");
       try {
-        const answer = await this.ragService.answer(question);
+        const answer = await this.ragService.answer(text);
         await ctx.reply(answer);
       } catch (error) {
-        await ctx.reply("❌ Error al procesar la pregunta.");
-        console.error("Ask error:", error);
-      }
-    });
-
-    this.bot.on(":text", async (ctx) => {
-      if (!ctx.message?.text.startsWith("/")) {
-        await ctx.reply(
-          "Envía un archivo, foto, o usa /help para ver comandos.",
-        );
+        await ctx.reply("❌ Error al procesar.");
+        console.error("Error:", error);
       }
     });
   }
@@ -256,22 +151,4 @@ export class BotApp {
   async stop(): Promise<void> {
     await this.bot.stop();
   }
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function recordId(): string {
-  return crypto.randomUUID().slice(0, 8);
-}
-
-function chunkLines(lines: string[], max: number): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < lines.length; i += max) {
-    chunks.push(lines.slice(i, i + max).join("\n"));
-  }
-  return chunks;
 }
