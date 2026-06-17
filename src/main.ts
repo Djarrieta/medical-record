@@ -51,8 +51,8 @@ console.log("Qdrant collection ready.");
 
 bot.start();
 
-const webPort = process.env.WEB_PORT;
-if (webPort) {
+const webPort = process.env.WEB_PORT ?? "3000";
+{
   const { startWebServer } = await import("./webServer");
   startWebServer({
     port: parseInt(webPort, 10),
