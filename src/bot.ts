@@ -43,7 +43,8 @@ export class BotApp {
 
   private registerMiddlewares(): void {
     this.bot.use(async (ctx, next) => {
-      if (ctx.from?.id !== this.config.allowedUserId) {
+      const userId = ctx.from?.id;
+      if (userId === undefined || !this.config.allowedUserIds.includes(userId)) {
         await ctx.reply("⛔ No autorizado");
         return;
       }

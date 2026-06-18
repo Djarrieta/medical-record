@@ -15,7 +15,7 @@ export interface FileRecord {
 
 export interface BotConfig {
   botToken: string;
-  allowedUserId: number;
+  allowedUserIds: number[];
   deepseekApiKey?: string;
   deepseekModel: string;
   deepseekBaseUrl: string;

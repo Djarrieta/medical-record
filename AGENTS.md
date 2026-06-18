@@ -58,7 +58,7 @@ The bot is **conversational, not command-driven** — `/start` is the only comma
 | Send photo | Saved as JPEG |
 | Send text | If awaiting a PDF password, treated as the password; otherwise a RAG question (requires `DEEPSEEK_API_KEY`) |
 
-- Single-user: only `ALLOWED_USER_ID` passes the auth middleware in `BotApp.registerMiddlewares()`.
+- Allowlist: `ALLOWED_USER_ID` is a comma-separated list of Telegram user IDs; only those pass the auth middleware in `BotApp.registerMiddlewares()`.
 - Text splitting: `RecursiveCharacterTextSplitter`, `chunkSize` 1000, `chunkOverlap` 200 (`src/bot.ts`).
 - Pending password state is held in-memory per user (`pendingPasswords` map); successful passwords are persisted to `PasswordStore` for reuse.
 

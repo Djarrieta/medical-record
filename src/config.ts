@@ -7,12 +7,16 @@ export class Config {
     const botToken = process.env.BOT_TOKEN;
     if (!botToken) throw new Error("BOT_TOKEN is required");
 
-    const allowedUserId = Number(process.env.ALLOWED_USER_ID);
-    if (!allowedUserId) throw new Error("ALLOWED_USER_ID is required");
+    const allowedUserIds = (process.env.ALLOWED_USER_ID ?? "")
+      .split(",")
+      .map((id) => Number(id.trim()))
+      .filter((id) => Number.isFinite(id) && id !== 0);
+    if (allowedUserIds.length === 0)
+      throw new Error("ALLOWED_USER_ID is required");
 
     this.botConfig = {
       botToken,
-      allowedUserId,
+      allowedUserIds,
       deepseekApiKey: process.env.DEEPSEEK_API_KEY,
       deepseekModel: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
       deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
