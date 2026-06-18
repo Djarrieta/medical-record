@@ -23,6 +23,7 @@ export class Config {
       dataDir: process.env.DATA_DIR ?? "./data",
       qdrantUrl: process.env.QDRANT_URL ?? "http://localhost:6333",
       embeddingModel: process.env.EMBEDDING_MODEL ?? "Xenova/multilingual-e5-small",
+      webUrl: process.env.WEB_URL ?? "http://REDACTED-HOST:3000",
     };
   }
 }

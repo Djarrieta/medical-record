@@ -22,4 +22,5 @@ export interface BotConfig {
   dataDir: string;
   qdrantUrl: string;
   embeddingModel: string;
+  webUrl: string;
 }

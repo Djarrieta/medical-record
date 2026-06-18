@@ -198,6 +198,8 @@ function htmlPage(passwordRequired: boolean): string {
 
     ${passwordRequired ? `<div class="password-row"><label for="passwordInput">Contraseña de acceso</label><input id="passwordInput" type="password" placeholder="••••••••" autocomplete="current-password"></div>` : ""}
 
+    <div class="password-row"><label for="pdfPasswordInput">Contraseña del PDF (si aplica)</label><input id="pdfPasswordInput" type="password" placeholder="••••••••"></div>
+
     <button id="uploadBtn" class="btn btn-primary btn-upload">Subir archivos</button>
     <ul id="fileList" class="list"></ul>
     <div id="summary" class="summary"></div>
@@ -233,6 +235,7 @@ const REFRESH_BTN = document.getElementById("refreshBtn");
 const SEARCH_INPUT = document.getElementById("searchInput");
 const COUNT_CHIP = document.getElementById("countChip");
 const PASSWORD_INPUT = document.getElementById("passwordInput");
+const PDF_PASSWORD_INPUT = document.getElementById("pdfPasswordInput");
 const TOAST = document.getElementById("toast");
 const PASSWORD_REQUIRED = ${passwordRequired};
 
@@ -247,6 +250,7 @@ let savedData = [];
 let toastTimer = null;
 
 function getPassword() { return PASSWORD_INPUT ? PASSWORD_INPUT.value : ""; }
+function getPdfPassword() { return PDF_PASSWORD_INPUT ? PDF_PASSWORD_INPUT.value : ""; }
 function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
 
 function showToast(msg) {
@@ -338,6 +342,8 @@ UPLOAD_BTN.addEventListener("click", async () => {
     try {
       const headers = { "X-File-Name": encodeURIComponent(item.name), "Content-Type": item.file.type || "application/octet-stream" };
       if (PASSWORD_REQUIRED) headers["X-Password"] = getPassword();
+      const pdfPassword = getPdfPassword();
+      if (pdfPassword) headers["X-Pdf-Password"] = pdfPassword;
       const res = await fetch("/upload", { method: "POST", headers, body: item.file });
       item.status = res.ok ? "done" : "error";
       if (res.ok) ok++; else err++;
@@ -447,12 +453,20 @@ async function processPdf(
   recordId: string,
   fileName: string,
   options: WebServerOptions,
+  pdfPassword?: string,
 ): Promise<void> {
   if (!options.pdfExtractor || !options.embedder || !options.qdrantStore) return;
 
   const buffer = Buffer.from(await Bun.file(filePath).arrayBuffer());
 
+  if (pdfPassword && options.passwordStore) {
+    options.passwordStore.add(pdfPassword);
+  }
+
   let text = await options.pdfExtractor.tryExtract(buffer);
+  if (text === null && pdfPassword) {
+    text = await options.pdfExtractor.tryExtract(buffer, pdfPassword);
+  }
   if (text === null && options.passwordStore) {
     const passwords = options.passwordStore.getAll();
     for (const pw of passwords) {
@@ -564,10 +578,12 @@ export function startWebServer(options: WebServerOptions): void {
 
         try {
           const decodedName = decodeURIComponent(originalName);
+          console.log(`Upload received: ${decodedName} (${mimeType})`);
           const record = await options.fileStore.saveStream(0, decodedName, mimeType, stream);
 
           if (record.mimeType === "application/pdf") {
-            await processPdf(record.path, record.id, record.originalName, options);
+            const pdfPassword = req.headers.get("x-pdf-password") || undefined;
+            await processPdf(record.path, record.id, record.originalName, options, pdfPassword);
           }
 
           return new Response(JSON.stringify({ ok: true, file: record }), {

@@ -1,4 +1,4 @@
-import { Bot } from "grammy";
+import { Bot, Keyboard } from "grammy";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import type { BotConfig, PendingPassword } from "./types";
 import type { FileStore } from "./fileStore";
@@ -18,6 +18,8 @@ export class BotApp {
   private ragService: RagService | null;
   private passwordStore: PasswordStore | null;
   private pendingPasswords: Map<number, PendingPassword>;
+  private pendingPasswordAdd: Set<number>;
+  private webUrl: string;
 
   constructor(
     config: BotConfig,
@@ -36,6 +38,8 @@ export class BotApp {
     this.ragService = ragService;
     this.passwordStore = passwordStore;
     this.pendingPasswords = new Map();
+    this.pendingPasswordAdd = new Set();
+    this.webUrl = config.webUrl;
     this.bot = new Bot(config.botToken);
     this.registerMiddlewares();
     this.registerHandlers();
@@ -77,12 +81,18 @@ export class BotApp {
   }
 
   private registerHandlers(): void {
-    this.bot.command("start", (ctx) =>
-      ctx.reply(
+    this.bot.command("start", (ctx) => {
+      const keyboard = new Keyboard()
+        .text("Upload")
+        .text("List")
+        .text("Password")
+        .resized();
+      return ctx.reply(
         "👋 Bienvenido a Medicar Records 2\n\n" +
           "Envíame un PDF, una foto, o simplemente haz una pregunta.",
-      ),
-    );
+        { reply_markup: keyboard },
+      );
+    });
 
     this.bot.on(":document", async (ctx) => {
       try {
@@ -166,6 +176,39 @@ export class BotApp {
     this.bot.on(":text", async (ctx) => {
       const text = ctx.message?.text;
       if (!text || text.startsWith("/")) return;
+
+      if (text === "Upload") {
+        await ctx.reply(`🌐 Sube archivos desde la web:\n${this.webUrl}`);
+        return;
+      }
+
+      if (text === "List") {
+        const files = this.fileStore.list();
+        if (files.length === 0) {
+          await ctx.reply("📂 No hay archivos guardados.");
+          return;
+        }
+        const lines = files.map((f, i) => `${i + 1}. <code>${f.id}</code> — ${f.originalName}`).join("\n");
+        await ctx.reply(`📂 Archivos guardados:\n\n${lines}`, { parse_mode: "HTML" });
+        return;
+      }
+
+      if (text === "Password") {
+        if (!this.passwordStore) {
+          await ctx.reply("❌ El sistema de contraseñas no está disponible.");
+          return;
+        }
+        this.pendingPasswordAdd.add(ctx.from!.id);
+        await ctx.reply("🔑 Escribe la contraseña para PDFs que quieres guardar:");
+        return;
+      }
+
+      if (this.pendingPasswordAdd.has(ctx.from!.id)) {
+        this.pendingPasswordAdd.delete(ctx.from!.id);
+        this.passwordStore?.add(text);
+        await ctx.reply("✅ Contraseña guardada.");
+        return;
+      }
 
       const pending = this.pendingPasswords.get(ctx.from!.id);
       if (pending && this.pdfExtractor && this.embedder && this.qdrantStore) {

@@ -67,7 +67,8 @@ export class FileStore {
     const fileName = `${id}${ext}`;
     const filePath = join(this.filesDir, fileName);
 
-    const written = await Bun.write(filePath, new Response(stream));
+    const buffer = Buffer.from(await new Response(stream).arrayBuffer());
+    const written = await Bun.write(filePath, buffer);
 
     const record: FileRecord = {
       id,
