@@ -88,15 +88,29 @@ export class FileStore {
   }
 
   list(): FileRecord[] {
-    return this.db
+    const rows = this.db
       .query("SELECT * FROM files ORDER BY created_at DESC")
-      .all() as FileRecord[];
+      .all() as Record<string, unknown>[];
+    return rows.map((row) => this.mapRow(row));
   }
 
   get(id: string): FileRecord | null {
-    return this.db
+    const row = this.db
       .query("SELECT * FROM files WHERE id = ?")
-      .get(id) as FileRecord | null;
+      .get(id) as Record<string, unknown> | null;
+    return row ? this.mapRow(row) : null;
+  }
+
+  private mapRow(row: Record<string, unknown>): FileRecord {
+    return {
+      id: row.id as string,
+      userId: row.user_id as number,
+      originalName: row.original_name as string,
+      mimeType: row.mime_type as string,
+      size: row.size as number,
+      path: row.path as string,
+      createdAt: row.created_at as string,
+    };
   }
 
   delete(id: string): boolean {
