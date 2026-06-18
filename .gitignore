@@ -5,3 +5,4 @@ data/*
 data/qdrant/
 data/models/
 bot.log
+.qdrant-initialized
