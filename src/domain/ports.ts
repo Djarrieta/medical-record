@@ -4,7 +4,7 @@ import type { FileRecord, SearchResult } from "./types";
 // Dependencies point inward: use cases depend on these, never on concrete adapters.
 
 export interface DocumentRepository {
-  save(userId: number, originalName: string, mimeType: string, buffer: Buffer): FileRecord;
+  save(userId: number, originalName: string, mimeType: string, buffer: Buffer): Promise<FileRecord>;
   saveStream(
     userId: number,
     originalName: string,

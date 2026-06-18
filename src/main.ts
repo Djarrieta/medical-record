@@ -66,11 +66,10 @@ console.log("Qdrant collection ready.");
 
 bot.start();
 
-const webPort = process.env.WEB_PORT ?? "3000";
 startWebServer({
-  port: parseInt(webPort, 10),
-  host: process.env.WEB_HOST ?? "0.0.0.0",
-  password: process.env.WEB_PASSWORD,
+  port: cfg.webPort,
+  host: cfg.webHost,
+  password: cfg.webPassword,
   repo,
   indexPdf,
   deleteDocument,

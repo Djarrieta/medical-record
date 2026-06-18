@@ -31,20 +31,20 @@ export class SqliteDocumentRepository implements DocumentRepository {
     `);
   }
 
-  save(userId: number, originalName: string, mimeType: string, buffer: Buffer): FileRecord {
+  async save(userId: number, originalName: string, mimeType: string, buffer: Buffer): Promise<FileRecord> {
     const id = crypto.randomUUID();
     const ext = extname(originalName);
     const fileName = `${id}${ext}`;
     const filePath = join(this.filesDir, fileName);
 
-    Bun.write(filePath, buffer);
+    const written = await Bun.write(filePath, buffer);
 
     const record: FileRecord = {
       id,
       userId,
       originalName,
       mimeType,
-      size: buffer.length,
+      size: written,
       path: filePath,
       createdAt: new Date().toISOString(),
     };

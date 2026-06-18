@@ -76,7 +76,7 @@ export class BotApp {
 
         const mimeType = doc.mime_type ?? "application/octet-stream";
         const fileName = doc.file_name ?? "unknown";
-        const record = this.repo.save(ctx.from!.id, fileName, mimeType, buffer);
+        const record = await this.repo.save(ctx.from!.id, fileName, mimeType, buffer);
 
         if (mimeType !== "application/pdf") {
           await ctx.reply(`✅ Archivo guardado: ${fileName}`);
@@ -112,7 +112,7 @@ export class BotApp {
         const res = await fetch(url);
         const buffer = Buffer.from(await res.arrayBuffer());
 
-        this.repo.save(
+        await this.repo.save(
           ctx.from!.id,
           `photo_${largest.file_unique_id}.jpg`,
           "image/jpeg",
