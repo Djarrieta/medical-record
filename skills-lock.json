@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "clean-ddd-hexagonal": {
+      "source": "ccheney/robust-skills",
+      "sourceType": "github",
+      "skillPath": "skills/clean-ddd-hexagonal/SKILL.md",
+      "computedHash": "3e2bcc45e58cd714b336e04c96544859d6577c4c6faf762cdf8ce3d02dbf9a79"
+    },
     "frontend-design": {
       "source": "anthropics/skills",
       "sourceType": "github",

@@ -2,7 +2,9 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
-export class PasswordStore {
+import type { PasswordVault } from "../../domain/ports";
+
+export class SqlitePasswordVault implements PasswordVault {
   private db: Database;
 
   constructor(dataDir: string) {

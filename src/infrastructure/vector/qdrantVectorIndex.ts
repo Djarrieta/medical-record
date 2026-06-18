@@ -1,15 +1,12 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 
+import type { VectorIndex } from "../../domain/ports";
+import type { ChunkMetadata, SearchResult } from "../../domain/types";
+
 const COLLECTION = "documents";
 const VECTOR_SIZE = 384;
 
-export interface ChunkMetadata {
-  text: string;
-  fileId: string;
-  fileName: string;
-}
-
-export class QdrantStore {
+export class QdrantVectorIndex implements VectorIndex {
   private client: QdrantClient;
   private ready = false;
 
@@ -47,7 +44,7 @@ export class QdrantStore {
   async search(
     vector: number[],
     topK = 5,
-  ): Promise<(ChunkMetadata & { score: number })[]> {
+  ): Promise<SearchResult[]> {
     await this.ensureCollection();
     const result = await this.client.search(COLLECTION, {
       vector,

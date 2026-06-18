@@ -1,20 +1,14 @@
-import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-
-import type { FileStore } from "./fileStore";
-import type { PdfExtractor } from "./pdfExtractor";
-import type { EmbeddingProvider } from "./embedding";
-import type { QdrantStore } from "./vectorStore";
-import type { PasswordStore } from "./passwordStore";
+import type { DocumentRepository } from "../../domain/ports";
+import type { IndexPdf } from "../../application/indexPdf";
+import type { DeleteDocument } from "../../application/deleteDocument";
 
 interface WebServerOptions {
   port: number;
   host: string;
   password?: string;
-  fileStore: FileStore;
-  pdfExtractor: PdfExtractor | null;
-  embedder: EmbeddingProvider | null;
-  qdrantStore: QdrantStore | null;
-  passwordStore: PasswordStore | null;
+  repo: DocumentRepository;
+  indexPdf: IndexPdf;
+  deleteDocument: DeleteDocument;
 }
 
 function htmlPage(passwordRequired: boolean): string {
@@ -448,43 +442,6 @@ function getPassword(req: Request, options: WebServerOptions): boolean {
   return false;
 }
 
-async function processPdf(
-  filePath: string,
-  recordId: string,
-  fileName: string,
-  options: WebServerOptions,
-  pdfPassword?: string,
-): Promise<void> {
-  if (!options.pdfExtractor || !options.embedder || !options.qdrantStore) return;
-
-  const buffer = Buffer.from(await Bun.file(filePath).arrayBuffer());
-
-  if (pdfPassword && options.passwordStore) {
-    options.passwordStore.add(pdfPassword);
-  }
-
-  let text = await options.pdfExtractor.tryExtract(buffer);
-  if (text === null && pdfPassword) {
-    text = await options.pdfExtractor.tryExtract(buffer, pdfPassword);
-  }
-  if (text === null && options.passwordStore) {
-    const passwords = options.passwordStore.getAll();
-    for (const pw of passwords) {
-      text = await options.pdfExtractor.tryExtract(buffer, pw);
-      if (text !== null) break;
-    }
-  }
-  if (text === null) return;
-
-  const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: 1000,
-    chunkOverlap: 200,
-  });
-  const chunks = await splitter.splitText(text);
-  const vectors = await options.embedder.embed(chunks);
-  await options.qdrantStore.index(chunks, vectors, recordId, fileName);
-}
-
 export function startWebServer(options: WebServerOptions): void {
   Bun.serve({
     port: options.port,
@@ -500,7 +457,7 @@ export function startWebServer(options: WebServerOptions): void {
       }
 
       if (method === "GET" && url.pathname === "/api/files") {
-        const files = options.fileStore.list();
+        const files = options.repo.list();
         return new Response(JSON.stringify(files), {
           headers: { "Content-Type": "application/json" },
         });
@@ -518,7 +475,7 @@ export function startWebServer(options: WebServerOptions): void {
           "/api/files/".length,
           url.pathname.length - "/raw".length,
         );
-        const record = options.fileStore.get(id);
+        const record = options.repo.get(id);
         if (!record) return new Response("Not found", { status: 404 });
 
         const file = Bun.file(record.path);
@@ -541,13 +498,9 @@ export function startWebServer(options: WebServerOptions): void {
           return new Response("Unauthorized", { status: 401 });
         }
         const id = url.pathname.slice("/api/files/".length);
-        const record = options.fileStore.get(id);
-        if (!record) return new Response("Not found", { status: 404 });
+        const deleted = await options.deleteDocument.run(id);
+        if (!deleted) return new Response("Not found", { status: 404 });
 
-        options.fileStore.delete(id);
-        if (options.qdrantStore) {
-          await options.qdrantStore.deleteByFileId(id).catch(() => {});
-        }
         return new Response(JSON.stringify({ ok: true }), {
           headers: { "Content-Type": "application/json" },
         });
@@ -579,11 +532,17 @@ export function startWebServer(options: WebServerOptions): void {
         try {
           const decodedName = decodeURIComponent(originalName);
           console.log(`Upload received: ${decodedName} (${mimeType})`);
-          const record = await options.fileStore.saveStream(0, decodedName, mimeType, stream);
+          const record = await options.repo.saveStream(0, decodedName, mimeType, stream);
 
           if (record.mimeType === "application/pdf") {
             const pdfPassword = req.headers.get("x-pdf-password") || undefined;
-            await processPdf(record.path, record.id, record.originalName, options, pdfPassword);
+            const buffer = Buffer.from(await Bun.file(record.path).arrayBuffer());
+            await options.indexPdf.run({
+              buffer,
+              fileId: record.id,
+              fileName: record.originalName,
+              password: pdfPassword,
+            });
           }
 
           return new Response(JSON.stringify({ ok: true, file: record }), {

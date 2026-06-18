@@ -15,7 +15,7 @@
 | Stop containers | `./stop.sh` — `sudo docker compose down` |
 | Reset all data | `./reset.sh` — stops containers, deletes DB/files/Qdrant/models, rebuilds |
 
-- **Web UI**: always starts on `http://<host>:<port>` (`WEB_PORT` defaults to `3000`) for drag-and-drop file upload (bypasses Telegram's 50MB limit). Password-protected if `WEB_PASSWORD` is set. See `src/webServer.ts`.
+- **Web UI**: always starts on `http://<host>:<port>` (`WEB_PORT` defaults to `3000`) for drag-and-drop file upload (bypasses Telegram's 50MB limit). Password-protected if `WEB_PASSWORD` is set. See `src/infrastructure/web/webServer.ts`.
 - **No test suite.** Validate changes with `bun run typeCheck`.
 - **Reset DB**: when the user says "reestablece la base de datos", "resetea los datos", "limpia los datos" or similar, run `./reset.sh`.
 
@@ -28,16 +28,22 @@
 
 ## Architecture
 
-- **Single module** (not a monorepo). Entrypoint: `src/main.ts`.
-- **Bot framework**: grammY v1 — `BotApp` class in `src/bot.ts`.
-- **LLM**: LangChain `ChatOpenAI` via DeepSeek-compatible API — `LlmProvider` singleton in `src/llm.ts`.
-- **File storage**: `FileStore` in `src/fileStore.ts` — saves files to `data/files/`, metadata in SQLite at `data/metadata.db` via `bun:sqlite` (WAL mode).
-- **PDF extraction**: `PdfExtractor` in `src/pdfExtractor.ts` — uses `unpdf`.
-- **Embeddings**: `EmbeddingProvider` in `src/embedding.ts` — `@huggingface/transformers` pipeline (`Xenova/multilingual-e5-small`, 384-dim), model cached in `data/models/`. Uses E5 prefixes: `passage: ` for indexing, `query: ` for search.
-- **Vector DB**: `QdrantStore` in `src/vectorStore.ts` — Qdrant client, collection `documents`, Cosine distance.
-- **RAG**: `RagService` in `src/rag.ts` — retrieves top-5 chunks via embedding + Qdrant, answers with DeepSeek. Prompt forces plain-text Spanish replies (no markdown).
-- **PDF passwords**: `PasswordStore` in `src/passwordStore.ts` — remembers PDF passwords in SQLite at `data/passwords.db`; tried automatically on locked PDFs before prompting the user.
-- **Web upload**: `src/webServer.ts` — Bun HTTP server serving an HTML drag-and-drop upload page, reusing the same PDF→embed→Qdrant pipeline.
+Lightweight Clean Architecture (ports & adapters). Dependencies point inward: `infrastructure → application → domain`.
+
+- **Single module** (not a monorepo). Entrypoint / composition root: `src/main.ts` — the only place that constructs concrete adapters and wires them into use cases.
+- **`src/domain/`** — pure core, no external deps. `types.ts` (`FileRecord`, `PendingPassword`, `ChunkMetadata`, `SearchResult`) and `ports.ts` (interfaces: `DocumentRepository`, `TextExtractor`, `Chunker`, `Embedder`, `VectorIndex`, `PasswordVault`, `Llm`).
+- **`src/application/`** — use cases that orchestrate domain + ports: `IndexPdf` (`indexPdf.ts`, the single PDF→split→embed→index pipeline, shared by bot and web), `AskQuestion` (`askQuestion.ts`, RAG), `DeleteDocument` (`deleteDocument.ts`, removes file + vectors).
+- **`src/infrastructure/`** — adapters implementing the ports (see below).
+- **Bot framework**: grammY v1 — `BotApp` class in `src/infrastructure/telegram/botApp.ts` (driver adapter; depends on use cases + `DocumentRepository`/`PasswordVault` ports).
+- **LLM**: LangChain `ChatOpenAI` via DeepSeek-compatible API — `DeepseekLlm` (implements `Llm`) in `src/infrastructure/llm/deepseekLlm.ts`.
+- **File storage**: `SqliteDocumentRepository` (implements `DocumentRepository`) in `src/infrastructure/persistence/sqliteDocumentRepository.ts` — saves files to `data/files/`, metadata in SQLite at `data/metadata.db` via `bun:sqlite` (WAL mode).
+- **PDF extraction**: `UnpdfTextExtractor` (implements `TextExtractor`) in `src/infrastructure/pdf/unpdfTextExtractor.ts` — uses `unpdf`.
+- **Text splitting**: `RecursiveChunker` (implements `Chunker`) in `src/infrastructure/text/recursiveChunker.ts` — `RecursiveCharacterTextSplitter`, `chunkSize` 1000, `chunkOverlap` 200.
+- **Embeddings**: `TransformersEmbedder` (implements `Embedder`) in `src/infrastructure/embedding/transformersEmbedder.ts` — `@huggingface/transformers` pipeline (`Xenova/multilingual-e5-small`, 384-dim), model cached in `data/models/`. Uses E5 prefixes: `passage: ` for indexing, `query: ` for search.
+- **Vector DB**: `QdrantVectorIndex` (implements `VectorIndex`) in `src/infrastructure/vector/qdrantVectorIndex.ts` — Qdrant client, collection `documents`, Cosine distance.
+- **RAG**: `AskQuestion` use case in `src/application/askQuestion.ts` — retrieves top-5 chunks via `Embedder` + `VectorIndex`, answers via the `Llm` port. Prompt forces plain-text Spanish replies (no markdown).
+- **PDF passwords**: `SqlitePasswordVault` (implements `PasswordVault`) in `src/infrastructure/persistence/sqlitePasswordVault.ts` — remembers PDF passwords in SQLite at `data/passwords.db`; tried automatically by `IndexPdf` on locked PDFs before prompting the user.
+- **Web upload**: `src/infrastructure/web/webServer.ts` — Bun HTTP server serving an HTML drag-and-drop upload page; reuses the `IndexPdf`/`DeleteDocument` use cases.
 
 ## Docker
 
@@ -48,25 +54,25 @@
 
 ## Telegram bot behavior
 
-The bot is **conversational, not command-driven** — `/start` is the only command. Handlers live in `src/bot.ts`.
+The bot is **conversational, not command-driven** — `/start` is the only command. Handlers live in `src/infrastructure/telegram/botApp.ts`.
 
 | Action | Behavior |
 |---|---|
 | `/start` | Welcome message |
-| Send PDF | Saves to disk + indexes via PDF→split→embed→Qdrant. Locked PDFs: tries known passwords from `PasswordStore`, else prompts for one. |
+| Send PDF | Saves to disk + indexes via the `IndexPdf` use case (PDF→split→embed→Qdrant). Locked PDFs: tries known passwords from the `PasswordVault`, else prompts for one. |
 | Send other document | Saved to disk only (not indexed) |
 | Send photo | Saved as JPEG |
-| Send text | If awaiting a PDF password, treated as the password; otherwise a RAG question (requires `DEEPSEEK_API_KEY`) |
+| Send text | If awaiting a PDF password, treated as the password; otherwise an `AskQuestion` (RAG) call (requires `DEEPSEEK_API_KEY`) |
 
 - Allowlist: `ALLOWED_USER_ID` is a comma-separated list of Telegram user IDs; only those pass the auth middleware in `BotApp.registerMiddlewares()`.
-- Text splitting: `RecursiveCharacterTextSplitter`, `chunkSize` 1000, `chunkOverlap` 200 (`src/bot.ts`).
-- Pending password state is held in-memory per user (`pendingPasswords` map); successful passwords are persisted to `PasswordStore` for reuse.
+- Text splitting lives in `RecursiveChunker`: `RecursiveCharacterTextSplitter`, `chunkSize` 1000, `chunkOverlap` 200 (`src/infrastructure/text/recursiveChunker.ts`).
+- Pending password state is held in-memory per user (`pendingPasswords` map); successful passwords are persisted to the `PasswordVault` for reuse.
 
 ## Data persistence
 
 - SQLite at `./data/metadata.db` (WAL mode, auto-created).
 - Table: `files` — 7 columns (id, user_id, original_name, mime_type, size, path, created_at).
-- PDF passwords in SQLite at `./data/passwords.db` (WAL mode, `PasswordStore`).
+- PDF passwords in SQLite at `./data/passwords.db` (WAL mode, `SqlitePasswordVault`).
 - Files at `./data/files/<uuid>.<ext>`.
 - Qdrant vector index at `./data/qdrant/`.
 - Model cache at `./data/models/`.
@@ -74,8 +80,9 @@ The bot is **conversational, not command-driven** — `/start` is the only comma
 
 ## Key patterns
 
-- `LlmProvider` is a singleton — call `LlmProvider.getInstance(config)`. Do NOT instantiate multiple LangChain clients.
-- `EmbeddingProvider.initialize()` must be called before `embed()`/`embedQuery()` — happens once at startup in `src/main.ts`.
-- `RagService` is only constructed when `DEEPSEEK_API_KEY` is set; it's passed as `null` otherwise, so guard for that in bot/web handlers.
+- **Dependency rule**: `domain/` has zero external deps; `application/` use cases depend only on `domain/ports.ts` interfaces; `infrastructure/` implements them. Concrete adapters are constructed and injected ONLY in `src/main.ts` (composition root).
+- **Shared pipelines live in use cases, not adapters.** PDF indexing is the `IndexPdf` use case (used by both bot and web) — do not re-implement extract→split→embed→index inline.
+- `TransformersEmbedder.initialize()` must be called before `embed()`/`embedQuery()` — happens once at startup in `src/main.ts`.
+- `AskQuestion` (RAG) is only constructed when `DEEPSEEK_API_KEY` is set; it's passed as `null` to `BotApp` otherwise, so guard for that in handlers.
 - Qdrant collection auto-created on first `ensureCollection()` call.
 - Signal handling in `main.ts`: SIGINT/SIGTERM stop the bot gracefully.

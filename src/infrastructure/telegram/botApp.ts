@@ -1,42 +1,34 @@
 import { Bot, Keyboard } from "grammy";
-import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import type { BotConfig, PendingPassword } from "./types";
-import type { FileStore } from "./fileStore";
-import type { PdfExtractor } from "./pdfExtractor";
-import type { EmbeddingProvider } from "./embedding";
-import type { QdrantStore } from "./vectorStore";
-import type { RagService } from "./rag";
-import type { PasswordStore } from "./passwordStore";
+
+import type { BotConfig } from "../config";
+import type { PendingPassword } from "../../domain/types";
+import type { DocumentRepository, PasswordVault } from "../../domain/ports";
+import type { IndexPdf } from "../../application/indexPdf";
+import type { AskQuestion } from "../../application/askQuestion";
 
 export class BotApp {
   private bot: Bot;
   private config: BotConfig;
-  private fileStore: FileStore;
-  private pdfExtractor: PdfExtractor | null;
-  private embedder: EmbeddingProvider | null;
-  private qdrantStore: QdrantStore | null;
-  private ragService: RagService | null;
-  private passwordStore: PasswordStore | null;
+  private repo: DocumentRepository;
+  private indexPdf: IndexPdf;
+  private askQuestion: AskQuestion | null;
+  private vault: PasswordVault;
   private pendingPasswords: Map<number, PendingPassword>;
   private pendingPasswordAdd: Set<number>;
   private webUrl: string;
 
   constructor(
     config: BotConfig,
-    fileStore: FileStore,
-    pdfExtractor: PdfExtractor | null = null,
-    embedder: EmbeddingProvider | null = null,
-    qdrantStore: QdrantStore | null = null,
-    ragService: RagService | null = null,
-    passwordStore: PasswordStore | null = null,
+    repo: DocumentRepository,
+    indexPdf: IndexPdf,
+    askQuestion: AskQuestion | null,
+    vault: PasswordVault,
   ) {
     this.config = config;
-    this.fileStore = fileStore;
-    this.pdfExtractor = pdfExtractor;
-    this.embedder = embedder;
-    this.qdrantStore = qdrantStore;
-    this.ragService = ragService;
-    this.passwordStore = passwordStore;
+    this.repo = repo;
+    this.indexPdf = indexPdf;
+    this.askQuestion = askQuestion;
+    this.vault = vault;
     this.pendingPasswords = new Map();
     this.pendingPasswordAdd = new Set();
     this.webUrl = config.webUrl;
@@ -58,26 +50,6 @@ export class BotApp {
     this.bot.catch((err) => {
       console.error("Bot error:", err);
     });
-  }
-
-  private async processPdf(
-    buffer: Buffer,
-    recordId: string,
-    fileName: string,
-    password?: string,
-  ): Promise<void> {
-    if (!this.pdfExtractor || !this.embedder || !this.qdrantStore) return;
-
-    const text = await this.pdfExtractor.tryExtract(buffer, password);
-    if (text === null) return;
-
-    const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: 1000,
-      chunkOverlap: 200,
-    });
-    const chunks = await splitter.splitText(text);
-    const vectors = await this.embedder.embed(chunks);
-    await this.qdrantStore.index(chunks, vectors, recordId, fileName);
   }
 
   private registerHandlers(): void {
@@ -103,47 +75,28 @@ export class BotApp {
         const buffer = Buffer.from(await res.arrayBuffer());
 
         const mimeType = doc.mime_type ?? "application/octet-stream";
-        const record = this.fileStore.save(
-          ctx.from!.id,
-          doc.file_name ?? "unknown",
-          mimeType,
-          buffer,
-        );
+        const fileName = doc.file_name ?? "unknown";
+        const record = this.repo.save(ctx.from!.id, fileName, mimeType, buffer);
 
-        if (mimeType !== "application/pdf" || !this.pdfExtractor || !this.embedder || !this.qdrantStore) {
-          await ctx.reply(`✅ Archivo guardado: ${doc.file_name}`);
+        if (mimeType !== "application/pdf") {
+          await ctx.reply(`✅ Archivo guardado: ${fileName}`);
           return;
         }
 
-        const text = await this.pdfExtractor.tryExtract(buffer);
-        if (text !== null) {
-          await ctx.reply(
-            `✅ Guardado: ${doc.file_name}\n⏳ Analizando e indexando...`,
-          );
-          await this.processPdf(buffer, record.id, doc.file_name ?? "unknown");
+        await ctx.reply(`✅ Guardado: ${fileName}\n⏳ Procesando...`);
+        const { indexed } = await this.indexPdf.run({
+          buffer,
+          fileId: record.id,
+          fileName,
+        });
+
+        if (indexed) {
           await ctx.reply(`📄 PDF analizado: indexado`);
           return;
         }
 
-        if (this.passwordStore) {
-          const passwords = this.passwordStore.getAll();
-          for (const pw of passwords) {
-            const unlocked = await this.pdfExtractor.tryExtract(buffer, pw);
-            if (unlocked !== null) {
-              await ctx.reply(
-                `✅ Guardado: ${doc.file_name}\n⏳ Analizando e indexando...`,
-              );
-              await this.processPdf(buffer, record.id, doc.file_name ?? "unknown", pw);
-              await ctx.reply(`📄 PDF analizado: indexado`);
-              return;
-            }
-          }
-        }
-
-        this.pendingPasswords.set(ctx.from!.id, { recordId: record.id, fileName: doc.file_name ?? "unknown" });
-        await ctx.reply(
-          `🔒 PDF protegido: ${doc.file_name}\nEscribe la contraseña:`,
-        );
+        this.pendingPasswords.set(ctx.from!.id, { recordId: record.id, fileName });
+        await ctx.reply(`🔒 PDF protegido: ${fileName}\nEscribe la contraseña:`);
       } catch (error) {
         await ctx.reply("❌ Error al guardar el archivo");
         console.error("File save error:", error);
@@ -159,7 +112,7 @@ export class BotApp {
         const res = await fetch(url);
         const buffer = Buffer.from(await res.arrayBuffer());
 
-        this.fileStore.save(
+        this.repo.save(
           ctx.from!.id,
           `photo_${largest.file_unique_id}.jpg`,
           "image/jpeg",
@@ -183,7 +136,7 @@ export class BotApp {
       }
 
       if (text === "List") {
-        const files = this.fileStore.list();
+        const files = this.repo.list();
         if (files.length === 0) {
           await ctx.reply("📂 No hay archivos guardados.");
           return;
@@ -194,10 +147,6 @@ export class BotApp {
       }
 
       if (text === "Password") {
-        if (!this.passwordStore) {
-          await ctx.reply("❌ El sistema de contraseñas no está disponible.");
-          return;
-        }
         this.pendingPasswordAdd.add(ctx.from!.id);
         await ctx.reply("🔑 Escribe la contraseña para PDFs que quieres guardar:");
         return;
@@ -205,14 +154,14 @@ export class BotApp {
 
       if (this.pendingPasswordAdd.has(ctx.from!.id)) {
         this.pendingPasswordAdd.delete(ctx.from!.id);
-        this.passwordStore?.add(text);
+        this.vault.add(text);
         await ctx.reply("✅ Contraseña guardada.");
         return;
       }
 
       const pending = this.pendingPasswords.get(ctx.from!.id);
-      if (pending && this.pdfExtractor && this.embedder && this.qdrantStore) {
-        const record = this.fileStore.get(pending.recordId);
+      if (pending) {
+        const record = this.repo.get(pending.recordId);
         if (!record) {
           this.pendingPasswords.delete(ctx.from!.id);
           await ctx.reply("❌ El archivo ya no existe.");
@@ -220,27 +169,29 @@ export class BotApp {
         }
 
         const fileBuffer = Buffer.from(await Bun.file(record.path).arrayBuffer());
-        const unlocked = await this.pdfExtractor.tryExtract(fileBuffer, text);
-        if (unlocked !== null) {
-          this.passwordStore?.add(text);
+        const { indexed } = await this.indexPdf.run({
+          buffer: fileBuffer,
+          fileId: pending.recordId,
+          fileName: pending.fileName,
+          password: text,
+        });
+        if (indexed) {
           this.pendingPasswords.delete(ctx.from!.id);
-          await ctx.reply(`🔓 Desbloqueado. Indexando...`);
-          await this.processPdf(fileBuffer, pending.recordId, pending.fileName, text);
-          await ctx.reply(`📄 PDF analizado e indexado`);
+          await ctx.reply("🔓 Desbloqueado. 📄 PDF analizado e indexado");
         } else {
           await ctx.reply("❌ Contraseña incorrecta, intenta de nuevo:");
         }
         return;
       }
 
-      if (!this.ragService) {
+      if (!this.askQuestion) {
         await ctx.reply("❌ El sistema de análisis no está disponible.");
         return;
       }
 
       await ctx.reply("🔍 Analizando...");
       try {
-        const answer = await this.ragService.answer(text);
+        const answer = await this.askQuestion.run(text);
         await ctx.reply(answer);
       } catch (error) {
         await ctx.reply("❌ Error al procesar.");

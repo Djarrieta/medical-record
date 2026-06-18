@@ -2,9 +2,10 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "fs";
 import { join, extname } from "path";
 
-import type { FileRecord } from "./types";
+import type { FileRecord } from "../../domain/types";
+import type { DocumentRepository } from "../../domain/ports";
 
-export class FileStore {
+export class SqliteDocumentRepository implements DocumentRepository {
   private db: Database;
   private filesDir: string;
 

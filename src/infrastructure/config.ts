@@ -1,4 +1,14 @@
-import type { BotConfig } from "./types";
+export interface BotConfig {
+  botToken: string;
+  allowedUserIds: number[];
+  deepseekApiKey?: string;
+  deepseekModel: string;
+  deepseekBaseUrl: string;
+  dataDir: string;
+  qdrantUrl: string;
+  embeddingModel: string;
+  webUrl: string;
+}
 
 export class Config {
   readonly botConfig: BotConfig;
