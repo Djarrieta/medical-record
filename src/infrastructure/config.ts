@@ -41,7 +41,7 @@ export class Config {
       webHost: process.env.WEB_HOST ?? "0.0.0.0",
       webPort,
       webPassword: process.env.WEB_PASSWORD,
-      webUrl: process.env.WEB_URL ?? `http://REDACTED-HOST:${webPort}`,
+      webUrl: process.env.WEB_URL ?? `http://localhost:${webPort}`,
     };
   }
 }

@@ -1,6 +1,6 @@
 ---
 name: deploy-from-windows
-description: Apply when working on this repo from the Windows laptop and changes need to reach the running app. The app does NOT run locally on Windows — it runs in Docker on the Linux server (REDACTED-HOST). Triggers on "deploy", "redeploy", "run on the server", "apply my changes", "rebuild", "push to prod", or after editing source that must take effect. Workflow: commit + push from Windows, then SSH to the server, git pull, and run ./start.sh.
+description: Apply when working on this repo from the Windows laptop and changes need to reach the running app. The app does NOT run locally on Windows — it runs in Docker on a Linux server. Triggers on "deploy", "redeploy", "run on the server", "apply my changes", "rebuild", "push to prod", or after editing source that must take effect. Workflow: commit + push from Windows, then SSH to the server, git pull, and run ./start.sh.
 ---
 
 # Deploy from the Windows laptop
@@ -10,8 +10,9 @@ so any code change must be synced to the server and rebuilt there to take effect
 
 ## Server facts
 
-- Host: `dario@REDACTED-HOST`
-- Repo path on server: `/home/dario/medical-record`
+- Connection details live in the gitignored `.env` file (never commit them):
+  `DEPLOY_USER`, `DEPLOY_HOST`, `DEPLOY_PATH`. Read them from `.env` at deploy time.
+- SSH target is `"$DEPLOY_USER@$DEPLOY_HOST"`; repo path on server is `$DEPLOY_PATH`.
 - SSH + sudo password: prompt the user / they will provide it. Do not hardcode secrets in committed files.
 - The repo on the server is owned by root, so git and docker commands need `sudo`.
 - `./start.sh` runs `sudo docker compose up -d --build` (rebuild + restart, detached).
@@ -31,22 +32,24 @@ so any code change must be synced to the server and rebuilt there to take effect
    ```
 
 3. **Pull + rebuild on the server** over SSH. Because the server repo is
-   root-owned, run git and compose under sudo. One-shot command:
+   root-owned, run git and compose under sudo. Load the deploy target from `.env`
+   first, then run a one-shot command:
    ```pwsh
-   ssh -t dario@REDACTED-HOST "cd /home/dario/medical-record && sudo git pull && sudo ./start.sh"
+   $env:DEPLOY_USER,$null,$env:DEPLOY_HOST = (Select-String '^DEPLOY_(USER|HOST)=' .env).Line -replace '.*=' ; $t = (Get-Content .env | Select-String '^DEPLOY_PATH=').Line -replace '.*='
+   ssh -t "$env:DEPLOY_USER@$env:DEPLOY_HOST" "cd $t && sudo git pull && sudo ./start.sh"
    ```
    `sudo` will prompt for the password on the server (use `ssh -t` to get a TTY).
 
-4. **Verify** the containers came up and check logs:
+4. **Verify** the containers came up and check logs (reuse the `.env` values):
    ```pwsh
-   ssh -t dario@REDACTED-HOST "cd /home/dario/medical-record && sudo docker compose logs --tail=60 app"
+   ssh -t "$env:DEPLOY_USER@$env:DEPLOY_HOST" "cd $t && sudo docker compose logs --tail=60 app"
    ```
 
 ## Gotchas
 
 - **Dubious ownership**: first git op may fail with
   `detected dubious ownership`. Fix once with:
-  `sudo git config --global --add safe.directory /home/dario/medical-record`.
+  `sudo git config --global --add safe.directory $DEPLOY_PATH`.
 - **`sudo: a terminal is required`**: use `ssh -t` (TTY) so sudo can prompt,
   or pipe the password with `echo <pw> | sudo -S <cmd>`.
 - A successful deploy ends with `Container medical-record-app Started` and
