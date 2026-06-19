@@ -13,6 +13,7 @@ export interface DocumentRepository {
   ): Promise<FileRecord>;
   list(): FileRecord[];
   get(id: string): FileRecord | null;
+  setIndexed(id: string, indexed: boolean): void;
   delete(id: string): boolean;
 }
 

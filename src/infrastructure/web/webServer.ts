@@ -116,6 +116,7 @@ function htmlPage(passwordRequired: boolean): string {
     letter-spacing: .02em; white-space: nowrap;
   }
   .badge-idx { background: var(--primary-tint); color: var(--primary-d); }
+  .badge-warn { background: var(--warn-tint); color: var(--warn); }
 
   .row .actions { display: flex; gap: .3rem; flex-shrink: 0; }
   .icon-btn {
@@ -130,6 +131,7 @@ function htmlPage(passwordRequired: boolean): string {
   .status { font-size: .8rem; font-weight: 600; white-space: nowrap; }
   .status-queued { color: var(--faint); }
   .status-uploading, .status-processing { color: var(--warn); }
+  .status-warn { color: var(--warn); }
   .status-done { color: var(--primary); }
   .status-error { color: var(--danger); }
 
@@ -153,6 +155,7 @@ function htmlPage(passwordRequired: boolean): string {
 
   .summary { margin-top: 1rem; padding: .8rem 1rem; border-radius: 10px; font-size: .88rem; font-weight: 500; display: none; }
   .summary.ok { background: var(--primary-tint); color: var(--primary-d); }
+  .summary.has-warn { background: var(--warn-tint); color: var(--warn); }
   .summary.has-errors { background: var(--danger-tint); color: var(--danger); }
 
   #toast {
@@ -309,7 +312,7 @@ function addFiles(files) {
 }
 
 function statusText(s) {
-  const map = { queued: "En cola", uploading: "Subiendo…", processing: "Procesando…", done: "Listo", error: "Error" };
+  const map = { queued: "En cola", uploading: "Subiendo…", processing: "Procesando…", done: "Listo", warn: "Atención", error: "Error" };
   return map[s] || s;
 }
 
@@ -317,7 +320,8 @@ function renderQueue() {
   FILE_LIST.innerHTML = queue.map((f) =>
     '<li class="row"><div class="fi">' + fileIcon(f.file.type) + '</div>' +
     '<div class="body"><div class="name">' + esc(f.name) + '</div>' +
-    '<div class="meta"><span>' + formatSize(f.size) + '</span></div></div>' +
+    '<div class="meta"><span>' + formatSize(f.size) + '</span>' +
+    (f.detail ? '<span>' + esc(f.detail) + '</span>' : '') + '</div></div>' +
     '<div class="status status-' + f.status + '">' + statusText(f.status) + '</div></li>'
   ).join("");
 }
@@ -327,11 +331,12 @@ UPLOAD_BTN.addEventListener("click", async () => {
   uploading = true;
   UPLOAD_BTN.disabled = true;
   SUMMARY.style.display = "none";
-  let ok = 0, err = 0;
+  let ok = 0, err = 0, warn = 0;
 
   for (const item of queue) {
     if (item.status === "done" || item.status === "error") continue;
     item.status = "uploading";
+    item.detail = "";
     renderQueue();
     try {
       const headers = { "X-File-Name": encodeURIComponent(item.name), "Content-Type": item.file.type || "application/octet-stream" };
@@ -339,30 +344,51 @@ UPLOAD_BTN.addEventListener("click", async () => {
       const pdfPassword = getPdfPassword();
       if (pdfPassword) headers["X-Pdf-Password"] = pdfPassword;
       const res = await fetch("/upload", { method: "POST", headers, body: item.file });
-      item.status = res.ok ? "done" : "error";
-      if (res.ok) ok++; else err++;
-    } catch {
+      let data = {};
+      try { data = await res.json(); } catch {}
+      if (!res.ok || !data.ok) {
+        item.status = "error";
+        item.detail = data.error ? String(data.error) : ("HTTP " + res.status);
+        err++;
+      } else if (data.reason === "locked") {
+        item.status = "warn";
+        item.detail = "Guardado · PDF protegido, contraseña incorrecta";
+        warn++;
+      } else if (data.reason === "empty") {
+        item.status = "warn";
+        item.detail = "Guardado · sin texto indexable (PDF escaneado)";
+        warn++;
+      } else if (data.indexed) {
+        item.status = "done";
+        item.detail = "Guardado e indexado";
+        ok++;
+      } else {
+        item.status = "done";
+        item.detail = "Guardado";
+        ok++;
+      }
+    } catch (e) {
       item.status = "error";
+      item.detail = String(e && e.message ? e.message : e);
       err++;
     }
     renderQueue();
   }
 
   SUMMARY.style.display = "block";
-  const total = ok + err;
-  if (err === 0) {
-    SUMMARY.className = "summary ok";
-    SUMMARY.textContent = total + " archivo" + (total !== 1 ? "s" : "") + " subido" + (total !== 1 ? "s" : "") + " correctamente.";
-  } else {
-    SUMMARY.className = "summary has-errors";
-    SUMMARY.textContent = ok + " correcto" + (ok !== 1 ? "s" : "") + ", " + err + " con error" + (err !== 1 ? "es" : "") + ".";
-  }
+  const parts = [];
+  if (ok) parts.push(ok + " correcto" + (ok !== 1 ? "s" : ""));
+  if (warn) parts.push(warn + " con aviso" + (warn !== 1 ? "s" : ""));
+  if (err) parts.push(err + " con error" + (err !== 1 ? "es" : ""));
+  SUMMARY.className = "summary " + (err ? "has-errors" : warn ? "has-warn" : "ok");
+  SUMMARY.textContent = parts.join(", ") + ".";
 
   uploading = false;
   UPLOAD_BTN.disabled = false;
   UPLOAD_BTN.style.display = "none";
-  queue = [];
-  FILE_LIST.innerHTML = "";
+  queue = queue.filter(item => item.status === "warn" || item.status === "error");
+  if (!queue.length) FILE_LIST.innerHTML = "";
+  else renderQueue();
   loadSavedFiles();
 });
 
@@ -382,8 +408,12 @@ function renderSaved() {
   }
 
   SAVED_FILES.innerHTML = items.map(f => {
-    const indexed = f.mimeType === "application/pdf"
-      ? '<span class="badge badge-idx">Indexado</span>' : "";
+    const isPdf = f.mimeType === "application/pdf";
+    const indexed = isPdf
+      ? (f.indexed
+          ? '<span class="badge badge-idx">Indexado</span>'
+          : '<span class="badge badge-warn" title="PDF guardado pero sin indexar (protegido o sin texto)">Sin indexar</span>')
+      : "";
     return '<li class="row"><div class="fi">' + fileIcon(f.mimeType) + '</div>' +
       '<div class="body"><div class="name">' + esc(f.originalName) + '</div>' +
       '<div class="meta"><span>' + typeLabel(f.mimeType) + '</span>' +
@@ -534,18 +564,22 @@ export function startWebServer(options: WebServerOptions): void {
           console.log(`Upload received: ${decodedName} (${mimeType})`);
           const record = await options.repo.saveStream(0, decodedName, mimeType, stream);
 
+          let indexed = false;
+          let reason: string | undefined;
           if (record.mimeType === "application/pdf") {
             const pdfPassword = req.headers.get("x-pdf-password") || undefined;
             const buffer = Buffer.from(await Bun.file(record.path).arrayBuffer());
-            await options.indexPdf.run({
+            const result = await options.indexPdf.run({
               buffer,
               fileId: record.id,
               fileName: record.originalName,
               password: pdfPassword,
             });
+            indexed = result.indexed;
+            reason = result.reason;
           }
 
-          return new Response(JSON.stringify({ ok: true, file: record }), {
+          return new Response(JSON.stringify({ ok: true, indexed, reason, file: record }), {
             status: 201,
             headers: { "Content-Type": "application/json" },
           });

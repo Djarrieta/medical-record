@@ -6,6 +6,7 @@ export interface FileRecord {
   size: number;
   path: string;
   createdAt: string;
+  indexed: boolean;
 }
 
 export interface PendingPassword {

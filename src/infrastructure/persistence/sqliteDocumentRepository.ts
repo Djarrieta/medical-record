@@ -26,9 +26,18 @@ export class SqliteDocumentRepository implements DocumentRepository {
         mime_type TEXT NOT NULL,
         size INTEGER NOT NULL,
         path TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        indexed INTEGER NOT NULL DEFAULT 0
       )
     `);
+
+    // Migration: add the `indexed` column to pre-existing databases.
+    const columns = this.db
+      .query("PRAGMA table_info(files)")
+      .all() as { name: string }[];
+    if (!columns.some((c) => c.name === "indexed")) {
+      this.db.run("ALTER TABLE files ADD COLUMN indexed INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   async save(userId: number, originalName: string, mimeType: string, buffer: Buffer): Promise<FileRecord> {
@@ -47,10 +56,11 @@ export class SqliteDocumentRepository implements DocumentRepository {
       size: written,
       path: filePath,
       createdAt: new Date().toISOString(),
+      indexed: false,
     };
 
     this.db.run(
-      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
       [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt],
     );
 
@@ -79,10 +89,11 @@ export class SqliteDocumentRepository implements DocumentRepository {
       size: written,
       path: filePath,
       createdAt: new Date().toISOString(),
+      indexed: false,
     };
 
     this.db.run(
-      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
       [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt],
     );
 
@@ -112,7 +123,12 @@ export class SqliteDocumentRepository implements DocumentRepository {
       size: row.size as number,
       path: row.path as string,
       createdAt: row.created_at as string,
+      indexed: Boolean(row.indexed),
     };
+  }
+
+  setIndexed(id: string, indexed: boolean): void {
+    this.db.run("UPDATE files SET indexed = ? WHERE id = ?", [indexed ? 1 : 0, id]);
   }
 
   delete(id: string): boolean {

@@ -34,7 +34,7 @@ const embedder = new TransformersEmbedder(cfg.embeddingModel, modelsDir);
 const vectorIndex = new QdrantVectorIndex(cfg.qdrantUrl);
 
 // --- Use cases (application) ---
-const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault);
+const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo);
 const deleteDocument = new DeleteDocument(repo, vectorIndex);
 
 let askQuestion: AskQuestion | null = null;

@@ -84,7 +84,7 @@ export class BotApp {
         }
 
         await ctx.reply(`✅ Guardado: ${fileName}\n⏳ Procesando...`);
-        const { indexed } = await this.indexPdf.run({
+        const { indexed, reason } = await this.indexPdf.run({
           buffer,
           fileId: record.id,
           fileName,
@@ -92,6 +92,13 @@ export class BotApp {
 
         if (indexed) {
           await ctx.reply(`📄 PDF analizado: indexado`);
+          return;
+        }
+
+        if (reason === "empty") {
+          await ctx.reply(
+            `⚠️ Guardado: ${fileName}\nNo se pudo indexar: el PDF no tiene texto extraíble (parece escaneado o solo imágenes).`,
+          );
           return;
         }
 
@@ -169,7 +176,7 @@ export class BotApp {
         }
 
         const fileBuffer = Buffer.from(await Bun.file(record.path).arrayBuffer());
-        const { indexed } = await this.indexPdf.run({
+        const { indexed, reason } = await this.indexPdf.run({
           buffer: fileBuffer,
           fileId: pending.recordId,
           fileName: pending.fileName,
@@ -178,6 +185,11 @@ export class BotApp {
         if (indexed) {
           this.pendingPasswords.delete(ctx.from!.id);
           await ctx.reply("🔓 Desbloqueado. 📄 PDF analizado e indexado");
+        } else if (reason === "empty") {
+          this.pendingPasswords.delete(ctx.from!.id);
+          await ctx.reply(
+            "🔓 Desbloqueado, pero el PDF no tiene texto extraíble (parece escaneado). No se indexó.",
+          );
         } else {
           await ctx.reply("❌ Contraseña incorrecta, intenta de nuevo:");
         }
