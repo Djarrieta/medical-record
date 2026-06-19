@@ -13,6 +13,8 @@ export interface DocumentRepository {
   ): Promise<FileRecord>;
   list(): FileRecord[];
   get(id: string): FileRecord | null;
+  // Returns an existing record whose content matches `buffer` (by SHA-256), or null.
+  findByContent(buffer: Buffer): FileRecord | null;
   setIndexed(id: string, indexed: boolean): void;
   delete(id: string): boolean;
 }

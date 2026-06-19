@@ -27,7 +27,8 @@ export class SqliteDocumentRepository implements DocumentRepository {
         size INTEGER NOT NULL,
         path TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        indexed INTEGER NOT NULL DEFAULT 0
+        indexed INTEGER NOT NULL DEFAULT 0,
+        sha256 TEXT NOT NULL DEFAULT ''
       )
     `);
 
@@ -38,6 +39,18 @@ export class SqliteDocumentRepository implements DocumentRepository {
     if (!columns.some((c) => c.name === "indexed")) {
       this.db.run("ALTER TABLE files ADD COLUMN indexed INTEGER NOT NULL DEFAULT 0");
     }
+
+    // Migration: add the `sha256` column (content hash for duplicate detection).
+    if (!columns.some((c) => c.name === "sha256")) {
+      this.db.run("ALTER TABLE files ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''");
+    }
+
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files (sha256)");
+  }
+
+  // SHA-256 hex digest of a file's content. Same bytes ⇒ same hash.
+  private hash(buffer: Buffer): string {
+    return new Bun.CryptoHasher("sha256").update(buffer).digest("hex");
   }
 
   async save(userId: number, originalName: string, mimeType: string, buffer: Buffer): Promise<FileRecord> {
@@ -57,11 +70,12 @@ export class SqliteDocumentRepository implements DocumentRepository {
       path: filePath,
       createdAt: new Date().toISOString(),
       indexed: false,
+      hash: this.hash(buffer),
     };
 
     this.db.run(
-      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt],
+      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt, record.hash],
     );
 
     return record;
@@ -90,11 +104,12 @@ export class SqliteDocumentRepository implements DocumentRepository {
       path: filePath,
       createdAt: new Date().toISOString(),
       indexed: false,
+      hash: this.hash(buffer),
     };
 
     this.db.run(
-      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt],
+      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt, record.hash],
     );
 
     return record;
@@ -114,6 +129,14 @@ export class SqliteDocumentRepository implements DocumentRepository {
     return row ? this.mapRow(row) : null;
   }
 
+  findByContent(buffer: Buffer): FileRecord | null {
+    const hash = this.hash(buffer);
+    const row = this.db
+      .query("SELECT * FROM files WHERE sha256 = ?")
+      .get(hash) as Record<string, unknown> | null;
+    return row ? this.mapRow(row) : null;
+  }
+
   private mapRow(row: Record<string, unknown>): FileRecord {
     return {
       id: row.id as string,
@@ -124,6 +147,7 @@ export class SqliteDocumentRepository implements DocumentRepository {
       path: row.path as string,
       createdAt: row.created_at as string,
       indexed: Boolean(row.indexed),
+      hash: (row.sha256 as string) ?? "",
     };
   }
 

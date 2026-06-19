@@ -350,6 +350,10 @@ UPLOAD_BTN.addEventListener("click", async () => {
         item.status = "error";
         item.detail = data.error ? String(data.error) : ("HTTP " + res.status);
         err++;
+      } else if (data.duplicate) {
+        item.status = "warn";
+        item.detail = "Duplicado · ya estaba guardado";
+        warn++;
       } else if (data.reason === "locked") {
         item.status = "warn";
         item.detail = "Guardado · PDF protegido, contraseña incorrecta";
@@ -562,13 +566,24 @@ export function startWebServer(options: WebServerOptions): void {
         try {
           const decodedName = decodeURIComponent(originalName);
           console.log(`Upload received: ${decodedName} (${mimeType})`);
-          const record = await options.repo.saveStream(0, decodedName, mimeType, stream);
+
+          // Buffer the body up front so we can hash it for duplicate detection.
+          const buffer = Buffer.from(await new Response(stream).arrayBuffer());
+
+          const existing = options.repo.findByContent(buffer);
+          if (existing) {
+            return new Response(
+              JSON.stringify({ ok: true, duplicate: true, indexed: existing.indexed, file: existing }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+          }
+
+          const record = await options.repo.save(0, decodedName, mimeType, buffer);
 
           let indexed = false;
           let reason: string | undefined;
           if (record.mimeType === "application/pdf") {
             const pdfPassword = req.headers.get("x-pdf-password") || undefined;
-            const buffer = Buffer.from(await Bun.file(record.path).arrayBuffer());
             const result = await options.indexPdf.run({
               buffer,
               fileId: record.id,

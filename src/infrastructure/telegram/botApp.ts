@@ -76,6 +76,15 @@ export class BotApp {
 
         const mimeType = doc.mime_type ?? "application/octet-stream";
         const fileName = doc.file_name ?? "unknown";
+
+        const existing = this.repo.findByContent(buffer);
+        if (existing) {
+          await ctx.reply(
+            `♻️ Este archivo ya estaba guardado como: ${existing.originalName}\nNo se volvió a guardar ni indexar.`,
+          );
+          return;
+        }
+
         const record = await this.repo.save(ctx.from!.id, fileName, mimeType, buffer);
 
         if (mimeType !== "application/pdf") {
