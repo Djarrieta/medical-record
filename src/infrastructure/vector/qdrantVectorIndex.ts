@@ -23,6 +23,10 @@ export class QdrantVectorIndex implements VectorIndex {
         vectors: { size: VECTOR_SIZE, distance: "Cosine" },
       });
     }
+    // Payload index on userId so per-user filters stay efficient.
+    await this.client
+      .createPayloadIndex(COLLECTION, { field_name: "userId", field_schema: "integer" })
+      .catch(() => {});
     this.ready = true;
   }
 
@@ -31,18 +35,20 @@ export class QdrantVectorIndex implements VectorIndex {
     vectors: number[][],
     fileId: string,
     fileName: string,
+    userId: number,
   ): Promise<void> {
     await this.ensureCollection();
     const points = chunks.map((chunk, i) => ({
       id: crypto.randomUUID(),
       vector: vectors[i],
-      payload: { text: chunk, fileId, fileName } satisfies ChunkMetadata,
+      payload: { text: chunk, fileId, fileName, userId } satisfies ChunkMetadata,
     }));
     await this.client.upsert(COLLECTION, { points });
   }
 
   async search(
     vector: number[],
+    userId: number,
     topK = 5,
   ): Promise<SearchResult[]> {
     await this.ensureCollection();
@@ -50,6 +56,9 @@ export class QdrantVectorIndex implements VectorIndex {
       vector,
       limit: topK,
       with_payload: true,
+      filter: {
+        must: [{ key: "userId", match: { value: userId } }],
+      },
     });
     return result.map((r) => ({
       ...(r.payload as unknown as ChunkMetadata),
@@ -57,11 +66,14 @@ export class QdrantVectorIndex implements VectorIndex {
     }));
   }
 
-  async deleteByFileId(fileId: string): Promise<void> {
+  async deleteByFileId(fileId: string, userId: number): Promise<void> {
     await this.ensureCollection();
     await this.client.delete(COLLECTION, {
       filter: {
-        must: [{ key: "fileId", match: { value: fileId } }],
+        must: [
+          { key: "fileId", match: { value: fileId } },
+          { key: "userId", match: { value: userId } },
+        ],
       },
     });
   }

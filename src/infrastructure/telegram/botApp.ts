@@ -2,7 +2,7 @@ import { Bot, InputFile, Keyboard } from "grammy";
 
 import type { BotConfig } from "../config";
 import type { PendingPassword } from "../../domain/types";
-import type { DocumentRepository, PasswordVault } from "../../domain/ports";
+import type { DocumentRepository, PasswordVault, SessionStore } from "../../domain/ports";
 import type { IndexPdf } from "../../application/indexPdf";
 import type { AskQuestion } from "../../application/askQuestion";
 
@@ -13,6 +13,7 @@ export class BotApp {
   private indexPdf: IndexPdf;
   private askQuestion: AskQuestion | null;
   private vault: PasswordVault;
+  private sessions: SessionStore;
   private pendingPasswords: Map<number, PendingPassword>;
   private pendingPasswordAdd: Set<number>;
   private webUrl: string;
@@ -23,12 +24,14 @@ export class BotApp {
     indexPdf: IndexPdf,
     askQuestion: AskQuestion | null,
     vault: PasswordVault,
+    sessions: SessionStore,
   ) {
     this.config = config;
     this.repo = repo;
     this.indexPdf = indexPdf;
     this.askQuestion = askQuestion;
     this.vault = vault;
+    this.sessions = sessions;
     this.pendingPasswords = new Map();
     this.pendingPasswordAdd = new Set();
     this.webUrl = config.webUrl;
@@ -44,6 +47,9 @@ export class BotApp {
         await ctx.reply("⛔ No autorizado");
         return;
       }
+      // Any authorized interaction marks activity and auto-creates the session,
+      // so conversation memory works even if the user never opens the web link.
+      this.sessions.touch(userId);
       await next();
     });
 
@@ -77,7 +83,7 @@ export class BotApp {
         const mimeType = doc.mime_type ?? "application/octet-stream";
         const fileName = doc.file_name ?? "unknown";
 
-        const existing = this.repo.findByContent(buffer);
+        const existing = this.repo.findByContent(buffer, ctx.from!.id);
         if (existing) {
           await ctx.reply(
             `♻️ Este archivo ya estaba guardado como: ${existing.originalName}\nNo se volvió a guardar ni indexar.`,
@@ -97,6 +103,7 @@ export class BotApp {
           buffer,
           fileId: record.id,
           fileName,
+          userId: ctx.from!.id,
         });
 
         if (indexed) {
@@ -147,12 +154,16 @@ export class BotApp {
       if (!text || text.startsWith("/")) return;
 
       if (text === "Upload") {
-        await ctx.reply(`🌐 Sube archivos desde la web:\n${this.webUrl}`);
+        const session = this.sessions.getOrCreate(ctx.from!.id);
+        const link = `${this.webUrl}/u/${ctx.from!.id}?token=${session.token}`;
+        await ctx.reply(
+          `🌐 Sube archivos desde la web (enlace privado y temporal):\n${link}`,
+        );
         return;
       }
 
       if (text === "List") {
-        const files = this.repo.list();
+        const files = this.repo.list(ctx.from!.id);
         if (files.length === 0) {
           await ctx.reply("📂 No hay archivos guardados.");
           return;
@@ -177,7 +188,7 @@ export class BotApp {
 
       const pending = this.pendingPasswords.get(ctx.from!.id);
       if (pending) {
-        const record = this.repo.get(pending.recordId);
+        const record = this.repo.get(pending.recordId, ctx.from!.id);
         if (!record) {
           this.pendingPasswords.delete(ctx.from!.id);
           await ctx.reply("❌ El archivo ya no existe.");
@@ -189,6 +200,7 @@ export class BotApp {
           buffer: fileBuffer,
           fileId: pending.recordId,
           fileName: pending.fileName,
+          userId: ctx.from!.id,
           password: text,
         });
         if (indexed) {
@@ -212,7 +224,7 @@ export class BotApp {
 
       await ctx.reply("🔍 Analizando...");
       try {
-        const { answer, documents } = await this.askQuestion.run(text);
+        const { answer, documents } = await this.askQuestion.run(text, ctx.from!.id);
         await ctx.reply(answer);
         for (const doc of documents) {
           await ctx.replyWithDocument(new InputFile(doc.path, doc.originalName));
@@ -228,6 +240,16 @@ export class BotApp {
     await this.bot.start({
       onStart: () => console.log("Bot started"),
     });
+  }
+
+  // Send a message to a user out-of-band (used by the session sweep for
+  // inactivity warnings and closes). In private chats chatId === userId.
+  async notify(userId: number, text: string): Promise<void> {
+    try {
+      await this.bot.api.sendMessage(userId, text);
+    } catch (err) {
+      console.error("notify failed:", err);
+    }
   }
 
   async stop(): Promise<void> {

@@ -7,12 +7,12 @@ export class DeleteDocument {
     private readonly vectorIndex: VectorIndex,
   ) {}
 
-  async run(id: string): Promise<boolean> {
-    const record = this.repo.get(id);
+  async run(id: string, userId: number): Promise<boolean> {
+    const record = this.repo.get(id, userId);
     if (!record) return false;
 
-    this.repo.delete(id);
-    await this.vectorIndex.deleteByFileId(id).catch(() => {});
+    this.repo.delete(id, userId);
+    await this.vectorIndex.deleteByFileId(id, userId).catch(() => {});
     return true;
   }
 }

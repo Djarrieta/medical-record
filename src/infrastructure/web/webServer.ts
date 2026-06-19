@@ -1,17 +1,17 @@
-import type { DocumentRepository } from "../../domain/ports";
+import type { DocumentRepository, SessionStore } from "../../domain/ports";
 import type { IndexPdf } from "../../application/indexPdf";
 import type { DeleteDocument } from "../../application/deleteDocument";
 
 interface WebServerOptions {
   port: number;
   host: string;
-  password?: string;
   repo: DocumentRepository;
   indexPdf: IndexPdf;
   deleteDocument: DeleteDocument;
+  sessions: SessionStore;
 }
 
-function htmlPage(passwordRequired: boolean): string {
+function htmlPage(): string {
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -193,8 +193,6 @@ function htmlPage(passwordRequired: boolean): string {
     </div>
     <input id="fileInput" type="file" multiple style="display:none">
 
-    ${passwordRequired ? `<div class="password-row"><label for="passwordInput">Contraseña de acceso</label><input id="passwordInput" type="password" placeholder="••••••••" autocomplete="current-password"></div>` : ""}
-
     <div class="password-row"><label for="pdfPasswordInput">Contraseña del PDF (si aplica)</label><input id="pdfPasswordInput" type="password" placeholder="••••••••"></div>
 
     <button id="uploadBtn" class="btn btn-primary btn-upload">Subir archivos</button>
@@ -231,10 +229,13 @@ const SAVED_FILES = document.getElementById("savedFiles");
 const REFRESH_BTN = document.getElementById("refreshBtn");
 const SEARCH_INPUT = document.getElementById("searchInput");
 const COUNT_CHIP = document.getElementById("countChip");
-const PASSWORD_INPUT = document.getElementById("passwordInput");
 const PDF_PASSWORD_INPUT = document.getElementById("pdfPasswordInput");
 const TOAST = document.getElementById("toast");
-const PASSWORD_REQUIRED = ${passwordRequired};
+
+// Auth comes from the URL: /u/<userId>?token=<sessionToken>.
+const PATH_MATCH = window.location.pathname.match(/\\/u\\/(\\d+)/);
+const USER_ID = PATH_MATCH ? PATH_MATCH[1] : "";
+const TOKEN = new URLSearchParams(window.location.search).get("token") || "";
 
 const ICON_DOC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
 const ICON_IMG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>';
@@ -245,10 +246,25 @@ let queue = [];
 let uploading = false;
 let savedData = [];
 let toastTimer = null;
+let sessionExpired = false;
 
-function getPassword() { return PASSWORD_INPUT ? PASSWORD_INPUT.value : ""; }
 function getPdfPassword() { return PDF_PASSWORD_INPUT ? PDF_PASSWORD_INPUT.value : ""; }
 function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
+
+// Append the auth params (userId + token) to any API URL.
+function authQuery(extra) {
+  const p = new URLSearchParams();
+  p.set("userId", USER_ID);
+  p.set("token", TOKEN);
+  if (extra) for (const k in extra) p.set(k, extra[k]);
+  return p.toString();
+}
+
+function handleExpired() {
+  if (sessionExpired) return;
+  sessionExpired = true;
+  showToast("Sesión expirada. Vuelve a pedir el enlace en Telegram.");
+}
 
 function showToast(msg) {
   TOAST.textContent = msg;
@@ -280,12 +296,7 @@ function typeLabel(mime) {
 function fileIcon(mime) { return mime && mime.startsWith("image/") ? ICON_IMG : ICON_DOC; }
 
 function rawUrl(id, download) {
-  let u = "/api/files/" + encodeURIComponent(id) + "/raw";
-  const params = [];
-  if (download) params.push("download=1");
-  if (PASSWORD_REQUIRED) params.push("password=" + encodeURIComponent(getPassword()));
-  if (params.length) u += "?" + params.join("&");
-  return u;
+  return "/api/files/" + encodeURIComponent(id) + "/raw?" + authQuery(download ? { download: "1" } : null);
 }
 
 /* ---------- Upload queue ---------- */
@@ -340,10 +351,10 @@ UPLOAD_BTN.addEventListener("click", async () => {
     renderQueue();
     try {
       const headers = { "X-File-Name": encodeURIComponent(item.name), "Content-Type": item.file.type || "application/octet-stream" };
-      if (PASSWORD_REQUIRED) headers["X-Password"] = getPassword();
       const pdfPassword = getPdfPassword();
       if (pdfPassword) headers["X-Pdf-Password"] = pdfPassword;
-      const res = await fetch("/upload", { method: "POST", headers, body: item.file });
+      const res = await fetch("/upload?" + authQuery(), { method: "POST", headers, body: item.file });
+      if (res.status === 401) { handleExpired(); item.status = "error"; item.detail = "Sesión expirada"; err++; renderQueue(); break; }
       let data = {};
       try { data = await res.json(); } catch {}
       if (!res.ok || !data.ok) {
@@ -442,10 +453,9 @@ async function deleteFile(id) {
   const file = savedData.find(f => f.id === id);
   const name = file ? file.originalName : "este archivo";
   if (!confirm("¿Eliminar \\"" + name + "\\"? Esta acción no se puede deshacer.")) return;
-  const headers = {};
-  if (PASSWORD_REQUIRED) headers["X-Password"] = getPassword();
   try {
-    const res = await fetch("/api/files/" + encodeURIComponent(id), { method: "DELETE", headers });
+    const res = await fetch("/api/files/" + encodeURIComponent(id) + "?" + authQuery(), { method: "DELETE" });
+    if (res.status === 401) { handleExpired(); return; }
     if (res.ok) { showToast("Archivo eliminado"); loadSavedFiles(); }
     else showToast("No se pudo eliminar");
   } catch { showToast("No se pudo eliminar"); }
@@ -453,7 +463,8 @@ async function deleteFile(id) {
 
 async function loadSavedFiles() {
   try {
-    const res = await fetch("/api/files");
+    const res = await fetch("/api/files?" + authQuery());
+    if (res.status === 401) { handleExpired(); return; }
     if (!res.ok) return;
     savedData = await res.json();
     renderSaved();
@@ -468,14 +479,6 @@ loadSavedFiles();
 </html>`;
 }
 
-function getPassword(req: Request, options: WebServerOptions): boolean {
-  if (!options.password) return true;
-  const url = new URL(req.url);
-  if (url.searchParams.get("password") === options.password) return true;
-  if (req.headers.get("x-password") === options.password) return true;
-  return false;
-}
-
 export function startWebServer(options: WebServerOptions): void {
   Bun.serve({
     port: options.port,
@@ -484,14 +487,33 @@ export function startWebServer(options: WebServerOptions): void {
       const url = new URL(req.url);
       const method = req.method;
 
-      if (method === "GET" && url.pathname === "/") {
-        return new Response(htmlPage(!!options.password), {
+      // The only entry point is /u/<userId> (HTML). Serve it as long as the path
+      // matches; the front-end reads the token from the query and the API calls
+      // are what actually enforce auth.
+      if (method === "GET" && /^\/u\/\d+\/?$/.test(url.pathname)) {
+        return new Response(htmlPage(), {
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       }
 
+      // Resolve the authenticated user for any API request from the query params
+      // (userId + token). Returns null and the caller replies 401.
+      const authUser = (): number | null => {
+        const userIdRaw = url.searchParams.get("userId");
+        const token = url.searchParams.get("token");
+        if (!userIdRaw || !token) return null;
+        const userId = Number(userIdRaw);
+        if (!Number.isFinite(userId)) return null;
+        const session = options.sessions.getByToken(userId, token);
+        if (!session) return null;
+        options.sessions.touch(userId);
+        return userId;
+      };
+
       if (method === "GET" && url.pathname === "/api/files") {
-        const files = options.repo.list();
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const files = options.repo.list(userId);
         return new Response(JSON.stringify(files), {
           headers: { "Content-Type": "application/json" },
         });
@@ -502,14 +524,13 @@ export function startWebServer(options: WebServerOptions): void {
         url.pathname.startsWith("/api/files/") &&
         url.pathname.endsWith("/raw")
       ) {
-        if (!getPassword(req, options)) {
-          return new Response("Unauthorized", { status: 401 });
-        }
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
         const id = url.pathname.slice(
           "/api/files/".length,
           url.pathname.length - "/raw".length,
         );
-        const record = options.repo.get(id);
+        const record = options.repo.get(id, userId);
         if (!record) return new Response("Not found", { status: 404 });
 
         const file = Bun.file(record.path);
@@ -528,11 +549,10 @@ export function startWebServer(options: WebServerOptions): void {
       }
 
       if (method === "DELETE" && url.pathname.startsWith("/api/files/")) {
-        if (!getPassword(req, options)) {
-          return new Response("Unauthorized", { status: 401 });
-        }
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
         const id = url.pathname.slice("/api/files/".length);
-        const deleted = await options.deleteDocument.run(id);
+        const deleted = await options.deleteDocument.run(id, userId);
         if (!deleted) return new Response("Not found", { status: 404 });
 
         return new Response(JSON.stringify({ ok: true }), {
@@ -541,9 +561,8 @@ export function startWebServer(options: WebServerOptions): void {
       }
 
       if (method === "POST" && url.pathname === "/upload") {
-        if (!getPassword(req, options)) {
-          return new Response("Unauthorized", { status: 401 });
-        }
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
 
         const originalName = req.headers.get("x-file-name");
         if (!originalName) {
@@ -570,7 +589,7 @@ export function startWebServer(options: WebServerOptions): void {
           // Buffer the body up front so we can hash it for duplicate detection.
           const buffer = Buffer.from(await new Response(stream).arrayBuffer());
 
-          const existing = options.repo.findByContent(buffer);
+          const existing = options.repo.findByContent(buffer, userId);
           if (existing) {
             return new Response(
               JSON.stringify({ ok: true, duplicate: true, indexed: existing.indexed, file: existing }),
@@ -578,7 +597,7 @@ export function startWebServer(options: WebServerOptions): void {
             );
           }
 
-          const record = await options.repo.save(0, decodedName, mimeType, buffer);
+          const record = await options.repo.save(userId, decodedName, mimeType, buffer);
 
           let indexed = false;
           let reason: string | undefined;
@@ -588,6 +607,7 @@ export function startWebServer(options: WebServerOptions): void {
               buffer,
               fileId: record.id,
               fileName: record.originalName,
+              userId,
               password: pdfPassword,
             });
             indexed = result.indexed;

@@ -1,7 +1,8 @@
-import { type BaseMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+import { type BaseMessage, AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 
 import type { Llm, Tool } from "../../domain/ports";
+import type { ConversationMessage } from "../../domain/types";
 import type { BotConfig } from "../config";
 
 // Safety cap on the agentic loop so a misbehaving model can't spin forever.
@@ -24,7 +25,12 @@ export class DeepseekLlm implements Llm {
     });
   }
 
-  async answer(systemPrompt: string, userMessage: string, tools: Tool[]): Promise<string> {
+  async answer(
+    systemPrompt: string,
+    history: ConversationMessage[],
+    userMessage: string,
+    tools: Tool[],
+  ): Promise<string> {
     const handlers = new Map(tools.map((t) => [t.name, t]));
     const model = tools.length
       ? this.model.bindTools(
@@ -35,7 +41,13 @@ export class DeepseekLlm implements Llm {
         )
       : this.model;
 
-    const messages: BaseMessage[] = [new SystemMessage(systemPrompt), new HumanMessage(userMessage)];
+    const messages: BaseMessage[] = [
+      new SystemMessage(systemPrompt),
+      ...history.map((m) =>
+        m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content),
+      ),
+      new HumanMessage(userMessage),
+    ];
 
     for (let step = 0; step < MAX_STEPS; step++) {
       const response = await model.invoke(messages);

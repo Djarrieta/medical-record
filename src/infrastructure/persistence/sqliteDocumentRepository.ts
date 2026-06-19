@@ -32,20 +32,8 @@ export class SqliteDocumentRepository implements DocumentRepository {
       )
     `);
 
-    // Migration: add the `indexed` column to pre-existing databases.
-    const columns = this.db
-      .query("PRAGMA table_info(files)")
-      .all() as { name: string }[];
-    if (!columns.some((c) => c.name === "indexed")) {
-      this.db.run("ALTER TABLE files ADD COLUMN indexed INTEGER NOT NULL DEFAULT 0");
-    }
-
-    // Migration: add the `sha256` column (content hash for duplicate detection).
-    if (!columns.some((c) => c.name === "sha256")) {
-      this.db.run("ALTER TABLE files ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''");
-    }
-
     this.db.run("CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files (sha256)");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_files_user ON files (user_id)");
   }
 
   // SHA-256 hex digest of a file's content. Same bytes ⇒ same hash.
@@ -53,11 +41,18 @@ export class SqliteDocumentRepository implements DocumentRepository {
     return new Bun.CryptoHasher("sha256").update(buffer).digest("hex");
   }
 
+  // Per-user storage directory: data/files/<userId>/.
+  private userDir(userId: number): string {
+    const dir = join(this.filesDir, String(userId));
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
   async save(userId: number, originalName: string, mimeType: string, buffer: Buffer): Promise<FileRecord> {
     const id = crypto.randomUUID();
     const ext = extname(originalName);
     const fileName = `${id}${ext}`;
-    const filePath = join(this.filesDir, fileName);
+    const filePath = join(this.userDir(userId), fileName);
 
     const written = await Bun.write(filePath, buffer);
 
@@ -90,7 +85,7 @@ export class SqliteDocumentRepository implements DocumentRepository {
     const id = crypto.randomUUID();
     const ext = extname(originalName);
     const fileName = `${id}${ext}`;
-    const filePath = join(this.filesDir, fileName);
+    const filePath = join(this.userDir(userId), fileName);
 
     const buffer = Buffer.from(await new Response(stream).arrayBuffer());
     const written = await Bun.write(filePath, buffer);
@@ -115,25 +110,25 @@ export class SqliteDocumentRepository implements DocumentRepository {
     return record;
   }
 
-  list(): FileRecord[] {
+  list(userId: number): FileRecord[] {
     const rows = this.db
-      .query("SELECT * FROM files ORDER BY created_at DESC")
-      .all() as Record<string, unknown>[];
+      .query("SELECT * FROM files WHERE user_id = ? ORDER BY created_at DESC")
+      .all(userId) as Record<string, unknown>[];
     return rows.map((row) => this.mapRow(row));
   }
 
-  get(id: string): FileRecord | null {
+  get(id: string, userId: number): FileRecord | null {
     const row = this.db
-      .query("SELECT * FROM files WHERE id = ?")
-      .get(id) as Record<string, unknown> | null;
+      .query("SELECT * FROM files WHERE id = ? AND user_id = ?")
+      .get(id, userId) as Record<string, unknown> | null;
     return row ? this.mapRow(row) : null;
   }
 
-  findByContent(buffer: Buffer): FileRecord | null {
+  findByContent(buffer: Buffer, userId: number): FileRecord | null {
     const hash = this.hash(buffer);
     const row = this.db
-      .query("SELECT * FROM files WHERE sha256 = ?")
-      .get(hash) as Record<string, unknown> | null;
+      .query("SELECT * FROM files WHERE sha256 = ? AND user_id = ?")
+      .get(hash, userId) as Record<string, unknown> | null;
     return row ? this.mapRow(row) : null;
   }
 
@@ -155,8 +150,8 @@ export class SqliteDocumentRepository implements DocumentRepository {
     this.db.run("UPDATE files SET indexed = ? WHERE id = ?", [indexed ? 1 : 0, id]);
   }
 
-  delete(id: string): boolean {
-    const record = this.get(id);
+  delete(id: string, userId: number): boolean {
+    const record = this.get(id, userId);
     if (!record) return false;
 
     try {
@@ -165,7 +160,7 @@ export class SqliteDocumentRepository implements DocumentRepository {
       // file may already be gone
     }
 
-    this.db.run("DELETE FROM files WHERE id = ?", [id]);
+    this.db.run("DELETE FROM files WHERE id = ? AND user_id = ?", [id, userId]);
     return true;
   }
 }

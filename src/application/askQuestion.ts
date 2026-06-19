@@ -1,5 +1,5 @@
 import type { FileRecord } from "../domain/types";
-import type { DocumentRepository, Embedder, Llm, Tool, VectorIndex } from "../domain/ports";
+import type { DocumentRepository, Embedder, Llm, SessionStore, Tool, VectorIndex } from "../domain/ports";
 
 const SYSTEM_PROMPT = `Eres un asistente médico que responde preguntas sobre los documentos clínicos del paciente.
 Tienes la herramienta "search_medical_records" para buscar fragmentos en los documentos indexados. Úsala SIEMPRE (una o varias veces, reformulando la búsqueda si hace falta) antes de responder.
@@ -22,9 +22,10 @@ export class AskQuestion {
     private readonly vectorIndex: VectorIndex,
     private readonly llm: Llm,
     private readonly repo: DocumentRepository,
+    private readonly sessions: SessionStore,
   ) {}
 
-  async run(question: string): Promise<AskResult> {
+  async run(question: string, userId: number): Promise<AskResult> {
     // Best score seen per source file across all tool invocations.
     const cited = new Map<string, number>();
     // fileName -> fileId, so the LLM can only request documents it actually found.
@@ -57,7 +58,7 @@ export class AskQuestion {
 
         const topK = Number.isFinite(Number(args.topK)) ? Number(args.topK) : 5;
         const queryVector = await this.embedder.embedQuery(query);
-        const results = await this.vectorIndex.search(queryVector, topK);
+        const results = await this.vectorIndex.search(queryVector, userId, topK);
 
         for (const r of results) {
           if (!cited.has(r.fileName) || r.score > cited.get(r.fileName)!) {
@@ -106,7 +107,7 @@ export class AskQuestion {
             note: "No se encontró ese archivo entre los resultados de búsqueda. Busca primero el documento.",
           });
         }
-        const record = this.repo.get(fileId);
+        const record = this.repo.get(fileId, userId);
         if (!record) {
           return JSON.stringify({ sent: false, note: "El archivo ya no está disponible." });
         }
@@ -115,8 +116,17 @@ export class AskQuestion {
       },
     };
 
-    const answer = await this.llm.answer(SYSTEM_PROMPT, question, [searchTool, sendTool]);
+    const history = this.sessions.history(userId);
+    const answer = await this.llm.answer(SYSTEM_PROMPT, history, question, [searchTool, sendTool]);
     const documents = Array.from(toSend.values());
+
+    const now = new Date().toISOString();
+    this.sessions.appendMessage(userId, { role: "user", content: question, createdAt: now });
+    this.sessions.appendMessage(userId, {
+      role: "assistant",
+      content: answer,
+      createdAt: new Date().toISOString(),
+    });
 
     if (cited.size === 0) return { answer, documents };
     return { answer: `${answer}\n\n---\nFuentes:\n${this.formatSources(cited)}`, documents };

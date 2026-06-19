@@ -12,6 +12,7 @@ export interface IndexPdfInput {
   buffer: Buffer;
   fileId: string;
   fileName: string;
+  userId: number;
   password?: string;
 }
 
@@ -41,7 +42,7 @@ export class IndexPdf {
   ) {}
 
   async run(input: IndexPdfInput): Promise<IndexPdfResult> {
-    const { buffer, fileId, fileName, password } = input;
+    const { buffer, fileId, fileName, userId, password } = input;
 
     const candidates: (string | undefined)[] = [undefined];
     if (password) candidates.push(password);
@@ -73,7 +74,7 @@ export class IndexPdf {
       }
 
       const vectors = await this.embedder.embed(chunks);
-      await this.vectorIndex.index(chunks, vectors, fileId, fileName);
+      await this.vectorIndex.index(chunks, vectors, fileId, fileName, userId);
       this.repo.setIndexed(fileId, true);
       return { indexed: true };
     }

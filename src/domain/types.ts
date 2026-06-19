@@ -20,6 +20,21 @@ export interface ChunkMetadata {
   text: string;
   fileId: string;
   fileName: string;
+  userId: number;
 }
 
 export type SearchResult = ChunkMetadata & { score: number };
+
+export interface ConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+}
+
+export interface Session {
+  userId: number;
+  token: string;
+  createdAt: string;
+  lastActivityAt: string;
+  warned: boolean;
+}

@@ -10,6 +10,7 @@ import { TransformersEmbedder } from "./infrastructure/embedding/transformersEmb
 import { QdrantVectorIndex } from "./infrastructure/vector/qdrantVectorIndex";
 import { RecursiveChunker } from "./infrastructure/text/recursiveChunker";
 import { DeepseekLlm } from "./infrastructure/llm/deepseekLlm";
+import { InMemorySessionStore } from "./infrastructure/session/sessionStore";
 import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
 
@@ -28,6 +29,7 @@ const vault = new SqlitePasswordVault(cfg.dataDir);
 const extractor = new UnpdfTextExtractor();
 const ocr = new TesseractOcr();
 const chunker = new RecursiveChunker();
+const sessions = new InMemorySessionStore(cfg.sessionTtlMs, cfg.sessionWarningGraceMs);
 
 const modelsDir = join(cfg.dataDir, "models");
 if (!existsSync(modelsDir)) mkdirSync(modelsDir, { recursive: true });
@@ -42,18 +44,40 @@ const deleteDocument = new DeleteDocument(repo, vectorIndex);
 let askQuestion: AskQuestion | null = null;
 if (cfg.deepseekApiKey) {
   const llm = new DeepseekLlm(cfg);
-  askQuestion = new AskQuestion(embedder, vectorIndex, llm, repo);
+  askQuestion = new AskQuestion(embedder, vectorIndex, llm, repo, sessions);
 }
 
 // --- Driver adapters ---
-const bot = new BotApp(cfg, repo, indexPdf, askQuestion, vault);
+const bot = new BotApp(cfg, repo, indexPdf, askQuestion, vault, sessions);
+
+const WARNING_MESSAGE =
+  "⏳ Tu sesión está por cerrarse por inactividad. Escribe algo para mantenerla activa; " +
+  "de lo contrario se borrará esta conversación (y el enlace de carga dejará de funcionar).";
+const CLOSE_MESSAGE =
+  "🔒 Sesión cerrada por inactividad: se borró esta conversación. " +
+  "El enlace de carga, si lo tenías abierto, también venció.";
+
+// Session sweep: warn before expiry, then close. Runs on an interval.
+const sweep = setInterval(() => {
+  const now = Date.now();
+  for (const s of sessions.dueForClose(now)) {
+    sessions.close(s.userId);
+    void bot.notify(s.userId, CLOSE_MESSAGE);
+  }
+  for (const s of sessions.dueForWarning(now)) {
+    sessions.markWarned(s.userId);
+    void bot.notify(s.userId, WARNING_MESSAGE);
+  }
+}, cfg.sessionSweepMs);
 
 process.on("SIGINT", async () => {
+  clearInterval(sweep);
   await bot.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
+  clearInterval(sweep);
   await bot.stop();
   process.exit(0);
 });
@@ -71,8 +95,8 @@ bot.start();
 startWebServer({
   port: cfg.webPort,
   host: cfg.webHost,
-  password: cfg.webPassword,
   repo,
   indexPdf,
   deleteDocument,
+  sessions,
 });

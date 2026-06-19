@@ -9,8 +9,10 @@ export interface BotConfig {
   embeddingModel: string;
   webHost: string;
   webPort: number;
-  webPassword?: string;
   webUrl: string;
+  sessionTtlMs: number;
+  sessionWarningGraceMs: number;
+  sessionSweepMs: number;
 }
 
 export class Config {
@@ -29,6 +31,13 @@ export class Config {
 
     const webPort = parseInt(process.env.WEB_PORT ?? "3000", 10);
 
+    const sessionTtlSeconds = parseInt(process.env.SESSION_TTL_SECONDS ?? "1800", 10);
+    const sessionWarningGraceSeconds = parseInt(
+      process.env.SESSION_WARNING_GRACE_SECONDS ?? "120",
+      10,
+    );
+    const sessionSweepSeconds = parseInt(process.env.SESSION_SWEEP_SECONDS ?? "30", 10);
+
     this.botConfig = {
       botToken,
       allowedUserIds,
@@ -40,8 +49,10 @@ export class Config {
       embeddingModel: process.env.EMBEDDING_MODEL ?? "Xenova/multilingual-e5-small",
       webHost: process.env.WEB_HOST ?? "0.0.0.0",
       webPort,
-      webPassword: process.env.WEB_PASSWORD,
       webUrl: process.env.WEB_URL ?? `http://localhost:${webPort}`,
+      sessionTtlMs: sessionTtlSeconds * 1000,
+      sessionWarningGraceMs: sessionWarningGraceSeconds * 1000,
+      sessionSweepMs: sessionSweepSeconds * 1000,
     };
   }
 }
