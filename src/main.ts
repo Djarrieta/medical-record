@@ -5,6 +5,7 @@ import { Config } from "./infrastructure/config";
 import { SqliteDocumentRepository } from "./infrastructure/persistence/sqliteDocumentRepository";
 import { SqlitePasswordVault } from "./infrastructure/persistence/sqlitePasswordVault";
 import { UnpdfTextExtractor } from "./infrastructure/pdf/unpdfTextExtractor";
+import { TesseractOcr } from "./infrastructure/ocr/tesseractOcr";
 import { TransformersEmbedder } from "./infrastructure/embedding/transformersEmbedder";
 import { QdrantVectorIndex } from "./infrastructure/vector/qdrantVectorIndex";
 import { RecursiveChunker } from "./infrastructure/text/recursiveChunker";
@@ -25,6 +26,7 @@ const cfg = config.botConfig;
 const repo = new SqliteDocumentRepository(cfg.dataDir);
 const vault = new SqlitePasswordVault(cfg.dataDir);
 const extractor = new UnpdfTextExtractor();
+const ocr = new TesseractOcr();
 const chunker = new RecursiveChunker();
 
 const modelsDir = join(cfg.dataDir, "models");
@@ -34,7 +36,7 @@ const embedder = new TransformersEmbedder(cfg.embeddingModel, modelsDir);
 const vectorIndex = new QdrantVectorIndex(cfg.qdrantUrl);
 
 // --- Use cases (application) ---
-const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo);
+const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo, ocr);
 const deleteDocument = new DeleteDocument(repo, vectorIndex);
 
 let askQuestion: AskQuestion | null = null;

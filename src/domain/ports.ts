@@ -25,6 +25,12 @@ export interface Chunker {
   split(text: string): Promise<string[]>;
 }
 
+export interface Ocr {
+  // Extract text from a scanned/image-only PDF via OCR.
+  // `password` is forwarded to the rasterizer for encrypted PDFs.
+  extract(buffer: Buffer, password?: string): Promise<string>;
+}
+
 export interface Embedder {
   embed(texts: string[]): Promise<number[][]>;
   embedQuery(text: string): Promise<number[]>;

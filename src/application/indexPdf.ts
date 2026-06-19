@@ -2,6 +2,7 @@ import type {
   Chunker,
   DocumentRepository,
   Embedder,
+  Ocr,
   PasswordVault,
   TextExtractor,
   VectorIndex,
@@ -36,6 +37,7 @@ export class IndexPdf {
     private readonly vectorIndex: VectorIndex,
     private readonly vault: PasswordVault,
     private readonly repo: DocumentRepository,
+    private readonly ocr: Ocr,
   ) {}
 
   async run(input: IndexPdfInput): Promise<IndexPdfResult> {
@@ -52,10 +54,19 @@ export class IndexPdf {
       // Persist a newly supplied password only after it actually unlocks the PDF.
       if (password && candidate === password) this.vault.add(password);
 
-      const chunks = (await this.chunker.split(text)).filter((c) => c.trim().length > 0);
-      // A readable PDF with no extractable text (typically a scan/image-only
-      // document) yields no chunks. Don't treat that as a fatal error — record
-      // it so the caller can tell the user OCR would be needed.
+      let chunks = (await this.chunker.split(text)).filter((c) => c.trim().length > 0);
+
+      // A readable PDF with no extractable text is typically a scan/image-only
+      // document. Fall back to OCR before giving up.
+      if (chunks.length === 0) {
+        const ocrText = await this.ocr.extract(buffer, candidate).catch((err) => {
+          console.error("OCR failed:", err);
+          return "";
+        });
+        chunks = (await this.chunker.split(ocrText)).filter((c) => c.trim().length > 0);
+      }
+
+      // Still nothing even after OCR — record it so the caller can tell the user.
       if (chunks.length === 0) {
         this.repo.setIndexed(fileId, false);
         return { indexed: false, reason: "empty" };
