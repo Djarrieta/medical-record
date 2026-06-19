@@ -40,6 +40,17 @@ export interface PasswordVault {
   getAll(): string[];
 }
 
+// A tool the LLM can call during an agentic answer (function calling).
+// `parameters` is a JSON Schema describing the arguments object.
+export interface Tool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute(args: Record<string, unknown>): Promise<string>;
+}
+
 export interface Llm {
-  complete(prompt: string): Promise<string>;
+  // Agentic answer: the model may call the provided tools as many times as it
+  // needs before producing a final natural-language reply.
+  answer(systemPrompt: string, userMessage: string, tools: Tool[]): Promise<string>;
 }
