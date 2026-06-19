@@ -1,4 +1,4 @@
-import { Bot, Keyboard } from "grammy";
+import { Bot, InputFile, Keyboard } from "grammy";
 
 import type { BotConfig } from "../config";
 import type { PendingPassword } from "../../domain/types";
@@ -203,8 +203,11 @@ export class BotApp {
 
       await ctx.reply("🔍 Analizando...");
       try {
-        const answer = await this.askQuestion.run(text);
+        const { answer, documents } = await this.askQuestion.run(text);
         await ctx.reply(answer);
+        for (const doc of documents) {
+          await ctx.replyWithDocument(new InputFile(doc.path, doc.originalName));
+        }
       } catch (error) {
         await ctx.reply("❌ Error al procesar.");
         console.error("Error:", error);

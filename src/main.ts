@@ -42,7 +42,7 @@ const deleteDocument = new DeleteDocument(repo, vectorIndex);
 let askQuestion: AskQuestion | null = null;
 if (cfg.deepseekApiKey) {
   const llm = new DeepseekLlm(cfg);
-  askQuestion = new AskQuestion(embedder, vectorIndex, llm);
+  askQuestion = new AskQuestion(embedder, vectorIndex, llm, repo);
 }
 
 // --- Driver adapters ---

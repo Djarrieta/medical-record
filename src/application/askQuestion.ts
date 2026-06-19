@@ -1,12 +1,17 @@
-import type { Embedder, Llm, Tool, VectorIndex } from "../domain/ports";
+import type { FileRecord } from "../domain/types";
+import type { DocumentRepository, Embedder, Llm, Tool, VectorIndex } from "../domain/ports";
 
-const SYSTEM_PROMPT = `Eres un asistente médico amable que responde preguntas sobre los documentos clínicos del paciente.
-Tienes una herramienta llamada "search_medical_records" para buscar fragmentos en los documentos indexados.
-Úsala SIEMPRE (una o varias veces, reformulando la búsqueda si hace falta) antes de responder.
-Responde SOLO con la información que devuelva la herramienta. Si no encuentras la respuesta, di amablemente que no tienes esa información.
-Responde en español, con un tono amigable y conversacional, como hablando con un paciente.
-NO uses formato markdown (negritas, itálicas, listas con guiones, etc.). Usa texto plano solamente.
-Menciona el nombre del archivo de origen de forma natural en la conversación.`;
+const SYSTEM_PROMPT = `Eres un asistente médico que responde preguntas sobre los documentos clínicos del paciente.
+Tienes la herramienta "search_medical_records" para buscar fragmentos en los documentos indexados. Úsala SIEMPRE (una o varias veces, reformulando la búsqueda si hace falta) antes de responder.
+Responde de forma directa y concisa: contesta únicamente lo que se te pregunta, sin agregar contexto, explicaciones ni datos que no te pidieron.
+Si no encuentras la respuesta, dilo en una frase. No ofrezcas seguir buscando ni hagas preguntas de seguimiento.
+Si el paciente pide que le envíes, reenvíes, mandes o muestres un documento original (por ejemplo "mándame el documento"), usa la herramienta "send_original_document" con el nombre exacto del archivo. Esto es útil cuando el dato puede estar manuscrito o no ser legible en el texto indexado.
+Responde en español con texto plano, sin formato markdown.`;
+
+export interface AskResult {
+  answer: string;
+  documents: FileRecord[];
+}
 
 // Use case: answer a question using retrieval-augmented generation. The vector
 // search is exposed to the LLM as a tool, so the model decides when and what to
@@ -16,11 +21,16 @@ export class AskQuestion {
     private readonly embedder: Embedder,
     private readonly vectorIndex: VectorIndex,
     private readonly llm: Llm,
+    private readonly repo: DocumentRepository,
   ) {}
 
-  async run(question: string): Promise<string> {
+  async run(question: string): Promise<AskResult> {
     // Best score seen per source file across all tool invocations.
     const cited = new Map<string, number>();
+    // fileName -> fileId, so the LLM can only request documents it actually found.
+    const foundFiles = new Map<string, string>();
+    // Original documents the LLM asked to send back to the patient.
+    const toSend = new Map<string, FileRecord>();
 
     const searchTool: Tool = {
       name: "search_medical_records",
@@ -53,6 +63,7 @@ export class AskQuestion {
           if (!cited.has(r.fileName) || r.score > cited.get(r.fileName)!) {
             cited.set(r.fileName, r.score);
           }
+          foundFiles.set(r.fileName, r.fileId);
         }
 
         if (results.length === 0) {
@@ -69,10 +80,46 @@ export class AskQuestion {
       },
     };
 
-    const answer = await this.llm.answer(SYSTEM_PROMPT, question, [searchTool]);
+    const sendTool: Tool = {
+      name: "send_original_document",
+      description:
+        "Reenvía al paciente el archivo original (PDF/imagen) tal cual está guardado. " +
+        "Úsala cuando el paciente pida que le envíes, mandes, reenvíes o muestres el documento, " +
+        "o cuando el dato solicitado pueda estar manuscrito o no aparezca en el texto indexado. " +
+        "Solo puedes enviar archivos que hayas encontrado antes con search_medical_records.",
+      parameters: {
+        type: "object",
+        properties: {
+          fileName: {
+            type: "string",
+            description: "Nombre exacto del archivo a enviar, tal como aparece en los resultados de búsqueda.",
+          },
+        },
+        required: ["fileName"],
+      },
+      execute: async (args) => {
+        const fileName = String(args.fileName ?? "").trim();
+        const fileId = foundFiles.get(fileName);
+        if (!fileId) {
+          return JSON.stringify({
+            sent: false,
+            note: "No se encontró ese archivo entre los resultados de búsqueda. Busca primero el documento.",
+          });
+        }
+        const record = this.repo.get(fileId);
+        if (!record) {
+          return JSON.stringify({ sent: false, note: "El archivo ya no está disponible." });
+        }
+        toSend.set(fileId, record);
+        return JSON.stringify({ sent: true, fileName });
+      },
+    };
 
-    if (cited.size === 0) return answer;
-    return `${answer}\n\n---\nFuentes:\n${this.formatSources(cited)}`;
+    const answer = await this.llm.answer(SYSTEM_PROMPT, question, [searchTool, sendTool]);
+    const documents = Array.from(toSend.values());
+
+    if (cited.size === 0) return { answer, documents };
+    return { answer: `${answer}\n\n---\nFuentes:\n${this.formatSources(cited)}`, documents };
   }
 
   private formatSources(cited: Map<string, number>): string {
