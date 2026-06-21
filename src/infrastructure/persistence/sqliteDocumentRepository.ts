@@ -9,15 +9,14 @@ export class SqliteDocumentRepository implements DocumentRepository {
   private db: Database;
   private filesDir: string;
 
-  constructor(dataDir: string) {
-    const dbDir = join(dataDir);
-    if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true });
+  // Shares the unified app.db connection; only owns the `files` table and the
+  // on-disk files directory (data/files/).
+  constructor(db: Database, dataDir: string) {
+    this.db = db;
 
     this.filesDir = join(dataDir, "files");
     if (!existsSync(this.filesDir)) mkdirSync(this.filesDir, { recursive: true });
 
-    this.db = new Database(join(dbDir, "metadata.db"));
-    this.db.run("PRAGMA journal_mode = WAL");
     this.db.run(`
       CREATE TABLE IF NOT EXISTS files (
         id TEXT PRIMARY KEY,

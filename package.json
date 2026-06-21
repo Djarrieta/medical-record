@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "bun src/main.ts",
+    "auth:mail": "bun src/auth-mail.ts",
     "typeCheck": "bunx tsc --noEmit"
   },
   "dependencies": {

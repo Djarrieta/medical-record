@@ -5,7 +5,8 @@ echo "Stopping containers..."
 sudo docker compose down
 
 echo "Removing SQLite database..."
-rm -f data/metadata.db data/metadata.db-shm data/metadata.db-wal
+rm -f data/app.db data/app.db-shm data/app.db-wal
+rm -f data/metadata.db* data/passwords.db*
 
 echo "Removing uploaded files..."
 find data/files/ -type f ! -name '.gitkeep' -delete

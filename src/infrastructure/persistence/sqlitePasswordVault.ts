@@ -1,16 +1,13 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "fs";
-import { join } from "path";
 
 import type { PasswordVault } from "../../domain/ports";
 
 export class SqlitePasswordVault implements PasswordVault {
   private db: Database;
 
-  constructor(dataDir: string) {
-    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
-    this.db = new Database(join(dataDir, "passwords.db"));
-    this.db.run("PRAGMA journal_mode = WAL");
+  // Shares the unified app.db connection; only owns the `passwords` table.
+  constructor(db: Database) {
+    this.db = db;
     this.db.run(`
       CREATE TABLE IF NOT EXISTS passwords (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

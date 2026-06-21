@@ -59,7 +59,7 @@ src/
 
 | Ruta | Contenido |
 |---|---|
-| `data/metadata.db` | Metadata de archivos (SQLite, WAL mode) |
+| `data/app.db` | Metadata de archivos y contraseñas de PDF (SQLite, WAL mode) |
 | `data/files/` | Archivos guardados en disco |
 | `data/qdrant/` | Índice vectorial de Qdrant |
 | `data/models/` | Caché del modelo de embeddings |

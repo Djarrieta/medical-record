@@ -1,4 +1,4 @@
-import type { ConversationMessage, FileRecord, SearchResult, Session } from "./types";
+import type { ConversationMessage, FileRecord, MailMessage, Note, SearchResult, Session } from "./types";
 
 // Ports = interfaces the domain/application need. Infrastructure implements them.
 // Dependencies point inward: use cases depend on these, never on concrete adapters.
@@ -56,6 +56,41 @@ export interface VectorIndex {
 export interface PasswordVault {
   add(password: string): void;
   getAll(): string[];
+}
+
+// Persists free-form text notes (separate from documents). Notes are still
+// embedded into the vector index so RAG can retrieve them.
+export interface NoteRepository {
+  save(userId: number, text: string, title: string): Note;
+  list(userId: number): Note[];
+  get(id: string, userId: number): Note | null;
+  delete(id: string, userId: number): boolean;
+}
+
+// User-controlled allowlist of email senders whose messages get ingested.
+// Entries are either a full address (exact match) or a domain starting with
+// "@" (suffix match), e.g. "@sura.com".
+export interface SenderAllowlist {
+  add(entry: string): void;
+  remove(entry: string): void;
+  list(): string[];
+  matches(fromAddress: string): boolean;
+}
+
+// Reads messages from a mailbox (e.g. Outlook/Hotmail via Microsoft Graph),
+// normalized to the domain's MailMessage shape. `stopAtProcessed` lets the
+// adapter stop paginating once it reaches an already-handled message (messages
+// come newest-first), so steady-state polls stay cheap while the first run
+// backfills all history.
+export interface MailSource {
+  fetchMessages(opts: { stopAtProcessed?: (id: string) => boolean }): Promise<MailMessage[]>;
+}
+
+// Tracks which mail message IDs have already been ingested, so reprocessing
+// never duplicates documents/notes.
+export interface ProcessedMessages {
+  has(id: string): boolean;
+  add(id: string): void;
 }
 
 // One conversation/session per user. Backs both the multi-turn chat memory

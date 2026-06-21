@@ -19,6 +19,33 @@ export interface PendingPassword {
   fileName: string;
 }
 
+// A free-form text note. Lives in its own `notes` table (not a FileRecord) but
+// is still chunked + embedded so RAG can retrieve it.
+export interface Note {
+  id: string;
+  userId: number;
+  title: string;
+  text: string;
+  createdAt: string;
+}
+
+// A single email message pulled from a MailSource, normalized away from the
+// provider's wire format (Microsoft Graph, etc.).
+export interface MailAttachment {
+  name: string;
+  mimeType: string;
+  buffer: Buffer;
+}
+
+export interface MailMessage {
+  id: string;
+  from: string;
+  subject: string;
+  receivedAt: string;
+  bodyText: string;
+  attachments: MailAttachment[];
+}
+
 export interface ChunkMetadata {
   text: string;
   fileId: string;
