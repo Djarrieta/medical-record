@@ -45,6 +45,13 @@ export class InMemorySessionStore implements SessionStore {
   getByToken(userId: number, token: string): Session | null {
     const session = this.sessions.get(userId);
     if (!session) return null;
+    // Reject expired sessions even if the periodic sweep hasn't collected them
+    // yet. Otherwise an old link would authenticate (and `touch` would revive
+    // it) in the window between TTL elapsing and the sweep running.
+    if (Date.now() - Date.parse(session.lastActivityAt) >= this.ttlMs) {
+      this.sessions.delete(userId);
+      return null;
+    }
     // Constant-time compare with a length guard (timingSafeEqual throws on
     // mismatched buffer sizes).
     const a = Buffer.from(session.token);
