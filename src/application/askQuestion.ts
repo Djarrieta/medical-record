@@ -87,7 +87,7 @@ export class AskQuestion {
         "Reenvía al paciente el archivo original (PDF/imagen) tal cual está guardado. " +
         "Úsala cuando el paciente pida que le envíes, mandes, reenvíes o muestres el documento, " +
         "o cuando el dato solicitado pueda estar manuscrito o no aparezca en el texto indexado. " +
-        "Solo puedes enviar archivos que hayas encontrado antes con search_medical_records.",
+        "Pasa el nombre exacto del archivo (tal como aparece en una búsqueda o en la conversación previa).",
       parameters: {
         type: "object",
         properties: {
@@ -100,19 +100,37 @@ export class AskQuestion {
       },
       execute: async (args) => {
         const fileName = String(args.fileName ?? "").trim();
-        const fileId = foundFiles.get(fileName);
+        if (!fileName) {
+          return JSON.stringify({ sent: false, note: "Falta el nombre del archivo." });
+        }
+        // Prefer a file already surfaced by search this turn; otherwise resolve
+        // it directly from the patient's stored files. The send request often
+        // arrives in a later turn (e.g. the user replies "sí, mándamelo") where
+        // no search ran, so `foundFiles` would be empty.
+        let fileId = foundFiles.get(fileName);
+        if (!fileId) {
+          const target = fileName.toLowerCase();
+          const match = this.repo
+            .list(userId)
+            .find(
+              (f) =>
+                f.originalName.toLowerCase() === target ||
+                f.title.toLowerCase() === target,
+            );
+          if (match) fileId = match.id;
+        }
         if (!fileId) {
           return JSON.stringify({
             sent: false,
-            note: "No se encontró ese archivo entre los resultados de búsqueda. Busca primero el documento.",
+            note: "No se encontró ese archivo. Busca primero el documento con search_medical_records.",
           });
         }
         const record = this.repo.get(fileId, userId);
         if (!record) {
           return JSON.stringify({ sent: false, note: "El archivo ya no está disponible." });
         }
-        toSend.set(fileId, record);
-        return JSON.stringify({ sent: true, fileName });
+        toSend.set(record.id, record);
+        return JSON.stringify({ sent: true, fileName: record.originalName });
       },
     };
 

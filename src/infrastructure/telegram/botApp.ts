@@ -95,17 +95,27 @@ export class BotApp {
     });
   }
 
+  // Clear any pending single-shot text-input states for a user. Prevents a
+  // stale intent (e.g. an earlier "Nota" press that was never followed up) from
+  // hijacking a later, unrelated message.
+  private clearPending(userId: number): void {
+    this.pendingPasswordAdd.delete(userId);
+    this.pendingNote.delete(userId);
+    this.pendingSenderAdd.delete(userId);
+    this.pendingSenderRemove.delete(userId);
+    this.pendingPasswords.delete(userId);
+  }
+
   private registerHandlers(): void {
     this.bot.command("start", (ctx) => {
+      this.clearPending(ctx.from!.id);
       const keyboard = new Keyboard()
-        .text("Subir")
         .text("Archivos")
         .text("Contraseña")
         .row()
-        .text("Nota")
         .text("Notas")
         .text("Correos")
-        .text("Nuevo")
+        .text("Reiniciar")
         .resized();
       return ctx.reply(
         "👋 Bienvenido a Medicar Records 2\n\n" +
@@ -123,6 +133,35 @@ export class BotApp {
         const ok = await this.deleteNote.run(noteId, userId);
         await ctx.answerCallbackQuery(ok ? "Nota eliminada" : "La nota ya no existe");
         if (ok) await ctx.editMessageReplyMarkup();
+        return;
+      }
+
+      if (data === "files:upload") {
+        const session = this.sessions.getOrCreate(userId);
+        const link = `${this.webUrl}/u/${userId}?token=${session.token}`;
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          `🌐 Sube archivos desde la web (enlace privado y temporal):\n${link}`,
+        );
+        return;
+      }
+
+      if (data === "files:list") {
+        await ctx.answerCallbackQuery();
+        await this.replyFilesList(ctx);
+        return;
+      }
+
+      if (data === "note:add") {
+        this.pendingNote.add(userId);
+        await ctx.answerCallbackQuery();
+        await ctx.reply("📝 Escribe la nota que quieres guardar:");
+        return;
+      }
+
+      if (data === "note:list") {
+        await ctx.answerCallbackQuery();
+        await this.replyNotesList(ctx);
         return;
       }
 
@@ -271,31 +310,20 @@ export class BotApp {
       const text = ctx.message?.text;
       if (!text || text.startsWith("/")) return;
 
-      if (text === "Subir") {
-        const session = this.sessions.getOrCreate(ctx.from!.id);
-        const link = `${this.webUrl}/u/${ctx.from!.id}?token=${session.token}`;
-        await ctx.reply(
-          `🌐 Sube archivos desde la web (enlace privado y temporal):\n${link}`,
-        );
-        return;
+      // Pressing a menu button is an explicit new action, so any earlier
+      // pending input intent (e.g. a forgotten "Nota" prompt) is cancelled.
+      // This prevents a stale state from silently saving the next message as a
+      // note, password, etc.
+      const MENU_LABELS = ["Archivos", "Contraseña", "Notas", "Correos", "Reiniciar"];
+      if (MENU_LABELS.includes(text)) {
+        this.clearPending(ctx.from!.id);
       }
 
       if (text === "Archivos") {
-        const files = this.repo.list(ctx.from!.id);
-        if (files.length === 0) {
-          await ctx.reply("📂 No hay archivos guardados.");
-          return;
-        }
-        const lines = files
-          .map((f, i) => {
-            const title = escapeHtml(f.title || f.originalName);
-            const name = escapeHtml(f.originalName);
-            return title === name
-              ? `${i + 1}. ${title}`
-              : `${i + 1}. <b>${title}</b>\n   <i>${name}</i>`;
-          })
-          .join("\n");
-        await ctx.reply(`📂 Archivos guardados:\n\n${lines}`, { parse_mode: "HTML" });
+        const keyboard = new InlineKeyboard()
+          .text("Subir", "files:upload")
+          .text("Listar", "files:list");
+        await ctx.reply("📂 Archivos:", { reply_markup: keyboard });
         return;
       }
 
@@ -305,20 +333,17 @@ export class BotApp {
         return;
       }
 
-      if (text === "Nuevo") {
+      if (text === "Reiniciar") {
         this.sessions.close(ctx.from!.id);
         await ctx.reply("🆕 Nueva conversación iniciada. Se borró el historial anterior.");
         return;
       }
 
-      if (text === "Nota") {
-        this.pendingNote.add(ctx.from!.id);
-        await ctx.reply("📝 Escribe la nota que quieres guardar:");
-        return;
-      }
-
       if (text === "Notas") {
-        await this.replyNotesList(ctx);
+        const keyboard = new InlineKeyboard()
+          .text("Agregar", "note:add")
+          .text("Listar", "note:list");
+        await ctx.reply("📝 Notas:", { reply_markup: keyboard });
         return;
       }
 
@@ -416,6 +441,25 @@ export class BotApp {
     });
   }
 
+  // List the user's saved files as plain text (titles + original names).
+  private async replyFilesList(ctx: Context): Promise<void> {
+    const files = this.repo.list(ctx.from!.id);
+    if (files.length === 0) {
+      await ctx.reply("📂 No hay archivos guardados.");
+      return;
+    }
+    const lines = files
+      .map((f, i) => {
+        const title = escapeHtml(f.title || f.originalName);
+        const name = escapeHtml(f.originalName);
+        return title === name
+          ? `${i + 1}. ${title}`
+          : `${i + 1}. <b>${title}</b>\n   <i>${name}</i>`;
+      })
+      .join("\n");
+    await ctx.reply(`📂 Archivos guardados:\n\n${lines}`, { parse_mode: "HTML" });
+  }
+
   // List the user's notes, each with an inline button to delete it.
   private async replyNotesList(ctx: Context): Promise<void> {
     const userId = ctx.from!.id;
@@ -447,6 +491,11 @@ export class BotApp {
   }
 
   async start(): Promise<void> {
+    // Register the only real slash command so Telegram's "/" menu shows just
+    // /start. This overwrites any stale commands previously set via BotFather.
+    await this.bot.api.setMyCommands([
+      { command: "start", description: "Mostrar el menú principal" },
+    ]);
     await this.bot.start({
       onStart: () => console.log("Bot started"),
     });

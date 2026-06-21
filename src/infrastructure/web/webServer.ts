@@ -169,6 +169,25 @@ function htmlPage(): string {
   }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+  #expired {
+    position: fixed; inset: 0; z-index: 100;
+    background: var(--bg); display: none;
+    place-items: center; padding: 2rem 1.25rem;
+  }
+  #expired.show { display: grid; }
+  #expired .panel {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 2rem 1.75rem; max-width: 380px; width: 100%; text-align: center;
+  }
+  #expired .badge {
+    width: 56px; height: 56px; margin: 0 auto 1.1rem; border-radius: 16px;
+    background: var(--warn-tint); color: var(--warn); display: grid; place-items: center;
+  }
+  #expired .badge svg { width: 28px; height: 28px; }
+  #expired h2 { font-size: 1.2rem; font-weight: 650; letter-spacing: -.01em; margin-bottom: .5rem; }
+  #expired p { font-size: .92rem; color: var(--muted); }
+
   @media (max-width: 520px) {
     .row .meta span:nth-child(n+3) { display: none; }
   }
@@ -222,6 +241,17 @@ function htmlPage(): string {
 
 <div id="toast" role="status" aria-live="polite"></div>
 
+<div id="expired" role="alertdialog" aria-modal="true" aria-labelledby="expiredTitle">
+  <div class="panel">
+    <div class="badge" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    </div>
+    <h2 id="expiredTitle">Sesión expirada</h2>
+    <p>Por seguridad, este enlace ya no es válido. Vuelve a pedir el enlace en Telegram para continuar.</p>
+  </div>
+</div>
+
+
 <script>
 const DROP_ZONE = document.getElementById("dropZone");
 const FILE_INPUT = document.getElementById("fileInput");
@@ -266,7 +296,8 @@ function authQuery(extra) {
 function handleExpired() {
   if (sessionExpired) return;
   sessionExpired = true;
-  showToast("Sesión expirada. Vuelve a pedir el enlace en Telegram.");
+  document.getElementById("expired").classList.add("show");
+  document.title = "Sesión expirada";
 }
 
 function showToast(msg) {
