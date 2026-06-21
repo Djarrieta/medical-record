@@ -3,6 +3,7 @@ import type {
   DocumentRepository,
   Embedder,
   Ocr,
+  Titler,
   VectorIndex,
 } from "../domain/ports";
 
@@ -33,6 +34,7 @@ export class IndexImage {
     private readonly embedder: Embedder,
     private readonly vectorIndex: VectorIndex,
     private readonly repo: DocumentRepository,
+    private readonly titler: Titler | null = null,
   ) {}
 
   async run(input: IndexImageInput): Promise<IndexImageResult> {
@@ -53,6 +55,16 @@ export class IndexImage {
     const vectors = await this.embedder.embed(chunks);
     await this.vectorIndex.index(chunks, vectors, fileId, fileName, userId);
     this.repo.setIndexed(fileId, true);
+
+    if (this.titler) {
+      try {
+        const title = await this.titler.generate(text, fileName);
+        if (title) this.repo.setTitle(fileId, title);
+      } catch (err) {
+        console.error("applyTitle failed:", err);
+      }
+    }
+
     return { indexed: true };
   }
 }

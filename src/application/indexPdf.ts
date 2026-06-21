@@ -5,6 +5,7 @@ import type {
   Ocr,
   PasswordVault,
   TextExtractor,
+  Titler,
   VectorIndex,
 } from "../domain/ports";
 
@@ -39,6 +40,7 @@ export class IndexPdf {
     private readonly vault: PasswordVault,
     private readonly repo: DocumentRepository,
     private readonly ocr: Ocr,
+    private readonly titler: Titler | null = null,
   ) {}
 
   async run(input: IndexPdfInput): Promise<IndexPdfResult> {
@@ -56,6 +58,7 @@ export class IndexPdf {
       if (password && candidate === password) this.vault.add(password);
 
       let chunks = (await this.chunker.split(text)).filter((c) => c.trim().length > 0);
+      let sourceText = text;
 
       // A readable PDF with no extractable text is typically a scan/image-only
       // document. Fall back to OCR before giving up.
@@ -65,6 +68,7 @@ export class IndexPdf {
           return "";
         });
         chunks = (await this.chunker.split(ocrText)).filter((c) => c.trim().length > 0);
+        sourceText = ocrText;
       }
 
       // Still nothing even after OCR — record it so the caller can tell the user.
@@ -76,10 +80,24 @@ export class IndexPdf {
       const vectors = await this.embedder.embed(chunks);
       await this.vectorIndex.index(chunks, vectors, fileId, fileName, userId);
       this.repo.setIndexed(fileId, true);
+      await this.applyTitle(fileId, sourceText, fileName);
       return { indexed: true };
     }
 
     this.repo.setIndexed(fileId, false);
     return { indexed: false, reason: "locked" };
+  }
+
+  // Generate and persist a friendly title from the document's text. Best-effort:
+  // a failure here must never break indexing, so the record keeps its fallback
+  // title (the original file name).
+  private async applyTitle(fileId: string, text: string, originalName: string): Promise<void> {
+    if (!this.titler) return;
+    try {
+      const title = await this.titler.generate(text, originalName);
+      if (title) this.repo.setTitle(fileId, title);
+    } catch (err) {
+      console.error("applyTitle failed:", err);
+    }
   }
 }

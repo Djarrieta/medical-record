@@ -8,6 +8,11 @@ import type { IndexImage } from "../../application/indexImage";
 import type { AskQuestion } from "../../application/askQuestion";
 import { isImageBuffer } from "../util/fileType";
 
+// Escape text for Telegram's HTML parse mode (titles/names may contain <, >, &).
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export class BotApp {
   private bot: Bot;
   private config: BotConfig;
@@ -211,7 +216,15 @@ export class BotApp {
           await ctx.reply("📂 No hay archivos guardados.");
           return;
         }
-        const lines = files.map((f, i) => `${i + 1}. <code>${f.id}</code> — ${f.originalName}`).join("\n");
+        const lines = files
+          .map((f, i) => {
+            const title = escapeHtml(f.title || f.originalName);
+            const name = escapeHtml(f.originalName);
+            return title === name
+              ? `${i + 1}. ${title}`
+              : `${i + 1}. <b>${title}</b>\n   <i>${name}</i>`;
+          })
+          .join("\n");
         await ctx.reply(`📂 Archivos guardados:\n\n${lines}`, { parse_mode: "HTML" });
         return;
       }

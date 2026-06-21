@@ -10,6 +10,7 @@ import { TransformersEmbedder } from "./infrastructure/embedding/transformersEmb
 import { QdrantVectorIndex } from "./infrastructure/vector/qdrantVectorIndex";
 import { RecursiveChunker } from "./infrastructure/text/recursiveChunker";
 import { DeepseekLlm } from "./infrastructure/llm/deepseekLlm";
+import { LlmTitler } from "./infrastructure/llm/llmTitler";
 import { InMemorySessionStore } from "./infrastructure/session/sessionStore";
 import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
@@ -38,9 +39,12 @@ const embedder = new TransformersEmbedder(cfg.embeddingModel, modelsDir);
 
 const vectorIndex = new QdrantVectorIndex(cfg.qdrantUrl);
 
+// Title generation is optional — only available when an LLM is configured.
+const titler = cfg.deepseekApiKey ? new LlmTitler(cfg) : null;
+
 // --- Use cases (application) ---
-const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo, ocr);
-const indexImage = new IndexImage(ocr, chunker, embedder, vectorIndex, repo);
+const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo, ocr, titler);
+const indexImage = new IndexImage(ocr, chunker, embedder, vectorIndex, repo, titler);
 const deleteDocument = new DeleteDocument(repo, vectorIndex);
 
 let askQuestion: AskQuestion | null = null;

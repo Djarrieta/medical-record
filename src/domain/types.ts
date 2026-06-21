@@ -9,6 +9,9 @@ export interface FileRecord {
   indexed: boolean;
   // SHA-256 hex digest of the file's content, used for duplicate detection.
   hash: string;
+  // Short, human-friendly title generated from the document's content.
+  // Falls back to originalName when no better title could be produced.
+  title: string;
 }
 
 export interface PendingPassword {

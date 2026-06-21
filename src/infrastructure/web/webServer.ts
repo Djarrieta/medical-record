@@ -413,7 +413,11 @@ UPLOAD_BTN.addEventListener("click", async () => {
 /* ---------- Files admin ---------- */
 function renderSaved() {
   const q = SEARCH_INPUT.value.trim().toLowerCase();
-  const items = q ? savedData.filter(f => (f.originalName || "").toLowerCase().includes(q)) : savedData;
+  const items = q
+    ? savedData.filter(f =>
+        (f.title || "").toLowerCase().includes(q) ||
+        (f.originalName || "").toLowerCase().includes(q))
+    : savedData;
   COUNT_CHIP.textContent = String(savedData.length);
 
   if (!savedData.length) {
@@ -432,9 +436,13 @@ function renderSaved() {
           ? '<span class="badge badge-idx">Indexado</span>'
           : '<span class="badge badge-warn" title="Guardado pero sin indexar (protegido o sin texto extraíble)">Sin indexar</span>')
       : "";
+    const title = f.title || f.originalName;
+    const showOriginal = title !== f.originalName;
     return '<li class="row"><div class="fi">' + fileIcon(f.mimeType) + '</div>' +
-      '<div class="body"><div class="name">' + esc(f.originalName) + '</div>' +
-      '<div class="meta"><span>' + typeLabel(f.mimeType) + '</span>' +
+      '<div class="body"><div class="name">' + esc(title) + '</div>' +
+      '<div class="meta">' +
+      (showOriginal ? '<span title="Nombre original">' + esc(f.originalName) + '</span>' : '') +
+      '<span>' + typeLabel(f.mimeType) + '</span>' +
       '<span>' + formatSize(f.size) + '</span>' +
       '<span>' + formatDate(f.createdAt) + '</span></div></div>' +
       indexed +
