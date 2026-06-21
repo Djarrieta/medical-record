@@ -1,12 +1,15 @@
 import type { DocumentRepository, SessionStore } from "../../domain/ports";
 import type { IndexPdf } from "../../application/indexPdf";
+import type { IndexImage } from "../../application/indexImage";
 import type { DeleteDocument } from "../../application/deleteDocument";
+import { isImageBuffer } from "../util/fileType";
 
 interface WebServerOptions {
   port: number;
   host: string;
   repo: DocumentRepository;
   indexPdf: IndexPdf;
+  indexImage: IndexImage;
   deleteDocument: DeleteDocument;
   sessions: SessionStore;
 }
@@ -371,7 +374,7 @@ UPLOAD_BTN.addEventListener("click", async () => {
         warn++;
       } else if (data.reason === "empty") {
         item.status = "warn";
-        item.detail = "Guardado · sin texto indexable (PDF escaneado)";
+        item.detail = "Guardado · sin texto indexable (escaneado)";
         warn++;
       } else if (data.indexed) {
         item.status = "done";
@@ -423,11 +426,11 @@ function renderSaved() {
   }
 
   SAVED_FILES.innerHTML = items.map(f => {
-    const isPdf = f.mimeType === "application/pdf";
-    const indexed = isPdf
+    const isIndexable = f.mimeType === "application/pdf" || (f.mimeType || "").startsWith("image/");
+    const indexed = isIndexable
       ? (f.indexed
           ? '<span class="badge badge-idx">Indexado</span>'
-          : '<span class="badge badge-warn" title="PDF guardado pero sin indexar (protegido o sin texto)">Sin indexar</span>')
+          : '<span class="badge badge-warn" title="Guardado pero sin indexar (protegido o sin texto extraíble)">Sin indexar</span>')
       : "";
     return '<li class="row"><div class="fi">' + fileIcon(f.mimeType) + '</div>' +
       '<div class="body"><div class="name">' + esc(f.originalName) + '</div>' +
@@ -609,6 +612,15 @@ export function startWebServer(options: WebServerOptions): void {
               fileName: record.originalName,
               userId,
               password: pdfPassword,
+            });
+            indexed = result.indexed;
+            reason = result.reason;
+          } else if (record.mimeType.startsWith("image/") || isImageBuffer(buffer)) {
+            const result = await options.indexImage.run({
+              buffer,
+              fileId: record.id,
+              fileName: record.originalName,
+              userId,
             });
             indexed = result.indexed;
             reason = result.reason;

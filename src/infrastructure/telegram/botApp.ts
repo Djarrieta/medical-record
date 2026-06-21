@@ -4,13 +4,16 @@ import type { BotConfig } from "../config";
 import type { PendingPassword } from "../../domain/types";
 import type { DocumentRepository, PasswordVault, SessionStore } from "../../domain/ports";
 import type { IndexPdf } from "../../application/indexPdf";
+import type { IndexImage } from "../../application/indexImage";
 import type { AskQuestion } from "../../application/askQuestion";
+import { isImageBuffer } from "../util/fileType";
 
 export class BotApp {
   private bot: Bot;
   private config: BotConfig;
   private repo: DocumentRepository;
   private indexPdf: IndexPdf;
+  private indexImage: IndexImage;
   private askQuestion: AskQuestion | null;
   private vault: PasswordVault;
   private sessions: SessionStore;
@@ -22,6 +25,7 @@ export class BotApp {
     config: BotConfig,
     repo: DocumentRepository,
     indexPdf: IndexPdf,
+    indexImage: IndexImage,
     askQuestion: AskQuestion | null,
     vault: PasswordVault,
     sessions: SessionStore,
@@ -29,6 +33,7 @@ export class BotApp {
     this.config = config;
     this.repo = repo;
     this.indexPdf = indexPdf;
+    this.indexImage = indexImage;
     this.askQuestion = askQuestion;
     this.vault = vault;
     this.sessions = sessions;
@@ -61,9 +66,10 @@ export class BotApp {
   private registerHandlers(): void {
     this.bot.command("start", (ctx) => {
       const keyboard = new Keyboard()
-        .text("Upload")
-        .text("List")
-        .text("Password")
+        .text("Subir")
+        .text("Archivos")
+        .text("Contraseña")
+        .text("Nuevo")
         .resized();
       return ctx.reply(
         "👋 Bienvenido a Medicar Records 2\n\n" +
@@ -93,6 +99,24 @@ export class BotApp {
 
         const record = await this.repo.save(ctx.from!.id, fileName, mimeType, buffer);
 
+        if (mimeType.startsWith("image/") || isImageBuffer(buffer)) {
+          await ctx.reply(`✅ Guardado: ${fileName}\n⏳ Procesando...`);
+          const { indexed, reason } = await this.indexImage.run({
+            buffer,
+            fileId: record.id,
+            fileName,
+            userId: ctx.from!.id,
+          });
+          if (indexed) {
+            await ctx.reply(`🖼️ Imagen analizada: indexada`);
+          } else if (reason === "empty") {
+            await ctx.reply(
+              `⚠️ Guardado: ${fileName}\nNo se pudo indexar: la imagen no tiene texto extraíble.`,
+            );
+          }
+          return;
+        }
+
         if (mimeType !== "application/pdf") {
           await ctx.reply(`✅ Archivo guardado: ${fileName}`);
           return;
@@ -113,7 +137,7 @@ export class BotApp {
 
         if (reason === "empty") {
           await ctx.reply(
-            `⚠️ Guardado: ${fileName}\nNo se pudo indexar: el PDF no tiene texto extraíble (parece escaneado o solo imágenes).`,
+            `⚠️ Guardado: ${fileName}\nNo se pudo indexar: no tiene texto extraíble (parece escaneado o solo imágenes).`,
           );
           return;
         }
@@ -135,14 +159,33 @@ export class BotApp {
         const res = await fetch(url);
         const buffer = Buffer.from(await res.arrayBuffer());
 
-        await this.repo.save(
+        const existing = this.repo.findByContent(buffer, ctx.from!.id);
+        if (existing) {
+          await ctx.reply(
+            `♻️ Esta foto ya estaba guardada como: ${existing.originalName}\nNo se volvió a guardar ni indexar.`,
+          );
+          return;
+        }
+
+        const record = await this.repo.save(
           ctx.from!.id,
           `photo_${largest.file_unique_id}.jpg`,
           "image/jpeg",
           buffer,
         );
 
-        await ctx.reply("✅ Foto guardada");
+        await ctx.reply("✅ Foto guardada\n⏳ Procesando...");
+        const { indexed, reason } = await this.indexImage.run({
+          buffer,
+          fileId: record.id,
+          fileName: record.originalName,
+          userId: ctx.from!.id,
+        });
+        if (indexed) {
+          await ctx.reply("🖼️ Foto analizada: indexada");
+        } else if (reason === "empty") {
+          await ctx.reply("⚠️ Foto guardada, pero no tiene texto extraíble. No se indexó.");
+        }
       } catch (error) {
         await ctx.reply("❌ Error al guardar la foto");
         console.error("Photo save error:", error);
@@ -153,7 +196,7 @@ export class BotApp {
       const text = ctx.message?.text;
       if (!text || text.startsWith("/")) return;
 
-      if (text === "Upload") {
+      if (text === "Subir") {
         const session = this.sessions.getOrCreate(ctx.from!.id);
         const link = `${this.webUrl}/u/${ctx.from!.id}?token=${session.token}`;
         await ctx.reply(
@@ -162,7 +205,7 @@ export class BotApp {
         return;
       }
 
-      if (text === "List") {
+      if (text === "Archivos") {
         const files = this.repo.list(ctx.from!.id);
         if (files.length === 0) {
           await ctx.reply("📂 No hay archivos guardados.");
@@ -173,9 +216,15 @@ export class BotApp {
         return;
       }
 
-      if (text === "Password") {
+      if (text === "Contraseña") {
         this.pendingPasswordAdd.add(ctx.from!.id);
         await ctx.reply("🔑 Escribe la contraseña para PDFs que quieres guardar:");
+        return;
+      }
+
+      if (text === "Nuevo") {
+        this.sessions.close(ctx.from!.id);
+        await ctx.reply("🆕 Nueva conversación iniciada. Se borró el historial anterior.");
         return;
       }
 
@@ -209,7 +258,7 @@ export class BotApp {
         } else if (reason === "empty") {
           this.pendingPasswords.delete(ctx.from!.id);
           await ctx.reply(
-            "🔓 Desbloqueado, pero el PDF no tiene texto extraíble (parece escaneado). No se indexó.",
+            "🔓 Desbloqueado, pero no tiene texto extraíble (parece escaneado). No se indexó.",
           );
         } else {
           await ctx.reply("❌ Contraseña incorrecta, intenta de nuevo:");

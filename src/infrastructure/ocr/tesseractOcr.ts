@@ -3,10 +3,12 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 import type { Ocr } from "../../domain/ports";
+import { isPdfBuffer } from "../util/fileType";
 
-// OCR adapter for scanned/image-only PDFs.
-// Pipeline: pdftoppm (poppler) rasterizes each page to PNG, then tesseract
-// reads the text out of each image. Both are native binaries installed in the
+// OCR adapter for scanned/image-only documents.
+// PDFs: pdftoppm (poppler) rasterizes each page to PNG, then tesseract reads
+// the text out of each image. Plain images are fed straight to tesseract —
+// leptonica autodetects the format. Both are native binaries installed in the
 // Docker image. Everything stays local — no document leaves the server.
 export class TesseractOcr implements Ocr {
   constructor(
@@ -15,6 +17,12 @@ export class TesseractOcr implements Ocr {
   ) {}
 
   async extract(buffer: Buffer, password?: string): Promise<string> {
+    return isPdfBuffer(buffer)
+      ? this.extractPdf(buffer, password)
+      : this.extractImage(buffer);
+  }
+
+  private async extractPdf(buffer: Buffer, password?: string): Promise<string> {
     const dir = mkdtempSync(join(tmpdir(), "ocr-"));
     try {
       const pdfPath = join(dir, "input.pdf");
@@ -42,6 +50,26 @@ export class TesseractOcr implements Ocr {
       }
 
       return texts.join("\n\n").trim();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  private async extractImage(buffer: Buffer): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), "ocr-"));
+    try {
+      // Leptonica autodetects the format from the content, so the extension
+      // of the temp file does not matter.
+      const imagePath = join(dir, "input");
+      await Bun.write(imagePath, buffer);
+
+      const out = await this.run("tesseract", [
+        imagePath,
+        "stdout",
+        "-l",
+        this.languages,
+      ]);
+      return out.trim();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

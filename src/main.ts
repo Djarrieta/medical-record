@@ -15,6 +15,7 @@ import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
 
 import { IndexPdf } from "./application/indexPdf";
+import { IndexImage } from "./application/indexImage";
 import { AskQuestion } from "./application/askQuestion";
 import { DeleteDocument } from "./application/deleteDocument";
 
@@ -39,6 +40,7 @@ const vectorIndex = new QdrantVectorIndex(cfg.qdrantUrl);
 
 // --- Use cases (application) ---
 const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo, ocr);
+const indexImage = new IndexImage(ocr, chunker, embedder, vectorIndex, repo);
 const deleteDocument = new DeleteDocument(repo, vectorIndex);
 
 let askQuestion: AskQuestion | null = null;
@@ -48,7 +50,7 @@ if (cfg.deepseekApiKey) {
 }
 
 // --- Driver adapters ---
-const bot = new BotApp(cfg, repo, indexPdf, askQuestion, vault, sessions);
+const bot = new BotApp(cfg, repo, indexPdf, indexImage, askQuestion, vault, sessions);
 
 const WARNING_MESSAGE =
   "⏳ Tu sesión está por cerrarse por inactividad. Escribe algo para mantenerla activa; " +
@@ -97,6 +99,7 @@ startWebServer({
   host: cfg.webHost,
   repo,
   indexPdf,
+  indexImage,
   deleteDocument,
   sessions,
 });
