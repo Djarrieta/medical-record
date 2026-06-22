@@ -4,7 +4,7 @@ import type { VectorIndex } from "../../domain/ports";
 import type { ChunkMetadata, SearchResult } from "../../domain/types";
 
 const COLLECTION = "documents";
-const VECTOR_SIZE = 768;
+const VECTOR_SIZE = 384;
 
 export class QdrantVectorIndex implements VectorIndex {
   private client: QdrantClient;
