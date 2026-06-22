@@ -10,6 +10,8 @@ export interface BotConfig {
   webHost: string;
   webPort: number;
   webUrl: string;
+  webUrlLocal?: string;
+  webUrlTailscale?: string;
   sessionTtlMs: number;
   sessionWarningGraceMs: number;
   sessionSweepMs: number;
@@ -50,6 +52,8 @@ export class Config {
       webHost: process.env.WEB_HOST ?? "0.0.0.0",
       webPort,
       webUrl: process.env.WEB_URL ?? `http://localhost:${webPort}`,
+      webUrlLocal: process.env.WEB_URL_LOCAL,
+      webUrlTailscale: process.env.WEB_URL_TAILSCALE,
       sessionTtlMs: sessionTtlSeconds * 1000,
       sessionWarningGraceMs: sessionWarningGraceSeconds * 1000,
       sessionSweepMs: sessionSweepSeconds * 1000,

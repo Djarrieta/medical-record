@@ -37,6 +37,8 @@ export class BotApp {
   private pendingPasswordAdd: Set<number>;
   private pendingNote: Set<number>;
   private webUrl: string;
+  private webUrlLocal?: string;
+  private webUrlTailscale?: string;
 
   constructor(
     config: BotConfig,
@@ -64,6 +66,8 @@ export class BotApp {
     this.pendingPasswordAdd = new Set();
     this.pendingNote = new Set();
     this.webUrl = config.webUrl;
+    this.webUrlLocal = config.webUrlLocal;
+    this.webUrlTailscale = config.webUrlTailscale;
     this.bot = new Bot(config.botToken);
     this.registerMiddlewares();
     this.registerHandlers();
@@ -135,11 +139,38 @@ export class BotApp {
 
       if (data === "files:upload") {
         const session = this.sessions.getOrCreate(userId);
-        const link = `${this.webUrl}/u/${userId}?token=${session.token}`;
+        const path = `/u/${userId}?token=${session.token}`;
         await ctx.answerCallbackQuery();
-        await ctx.reply(
-          `🌐 Sube archivos desde la web (enlace privado y temporal):\n${link}`,
-        );
+
+        const lines: string[] = [
+          "🌐 *Sube archivos desde la web* (enlace privado y temporal).",
+          "Elige según dónde estés:",
+          "",
+        ];
+
+        if (this.webUrlLocal) {
+          lines.push(
+            "🏠 *En casa* (mismo WiFi que el servidor):",
+            `${this.webUrlLocal}${path}`,
+            "",
+          );
+        }
+        if (this.webUrlTailscale) {
+          lines.push(
+            "🔒 *Fuera de casa* (con Tailscale activo en tu dispositivo):",
+            `${this.webUrlTailscale}${path}`,
+            "",
+          );
+        }
+        // Fallback when neither local nor Tailscale URLs are configured.
+        if (!this.webUrlLocal && !this.webUrlTailscale) {
+          lines.push(`${this.webUrl}${path}`, "");
+        }
+
+        await ctx.reply(lines.join("\n").trimEnd(), {
+          parse_mode: "Markdown",
+          link_preview_options: { is_disabled: true },
+        });
         return;
       }
 

@@ -79,14 +79,6 @@ function htmlPage(): string {
   #dropZone strong { display: block; font-weight: 600; font-size: 1rem; }
   #dropZone span { font-size: .85rem; color: var(--muted); }
 
-  .password-row { margin-top: 1rem; }
-  .password-row label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .3rem; font-weight: 500; }
-  #passwordInput {
-    width: 100%; padding: .6rem .75rem; border: 1px solid var(--line);
-    border-radius: 9px; font-size: .9rem; color: var(--ink); background: #fafdfb;
-  }
-  #passwordInput:focus { outline: 2px solid var(--primary-tint); border-color: var(--primary); }
-
   .btn {
     font: inherit; cursor: pointer; border-radius: 9px; border: 1px solid transparent;
     padding: .6rem 1rem; font-size: .9rem; font-weight: 600; transition: background .15s, border-color .15s, color .15s;
@@ -215,8 +207,6 @@ function htmlPage(): string {
     </div>
     <input id="fileInput" type="file" multiple style="display:none">
 
-    <div class="password-row"><label for="pdfPasswordInput">Contraseña del PDF (si aplica)</label><input id="pdfPasswordInput" type="password" placeholder="••••••••"></div>
-
     <button id="uploadBtn" class="btn btn-primary btn-upload">Subir archivos</button>
     <ul id="fileList" class="list"></ul>
     <div id="summary" class="summary"></div>
@@ -262,7 +252,6 @@ const SAVED_FILES = document.getElementById("savedFiles");
 const REFRESH_BTN = document.getElementById("refreshBtn");
 const SEARCH_INPUT = document.getElementById("searchInput");
 const COUNT_CHIP = document.getElementById("countChip");
-const PDF_PASSWORD_INPUT = document.getElementById("pdfPasswordInput");
 const TOAST = document.getElementById("toast");
 
 // Auth comes from the URL: /u/<userId>?token=<sessionToken>.
@@ -281,7 +270,6 @@ let savedData = [];
 let toastTimer = null;
 let sessionExpired = false;
 
-function getPdfPassword() { return PDF_PASSWORD_INPUT ? PDF_PASSWORD_INPUT.value : ""; }
 function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
 
 // Append the auth params (userId + token) to any API URL.
@@ -385,8 +373,6 @@ UPLOAD_BTN.addEventListener("click", async () => {
     renderQueue();
     try {
       const headers = { "X-File-Name": encodeURIComponent(item.name), "Content-Type": item.file.type || "application/octet-stream" };
-      const pdfPassword = getPdfPassword();
-      if (pdfPassword) headers["X-Pdf-Password"] = pdfPassword;
       const res = await fetch("/upload?" + authQuery(), { method: "POST", headers, body: item.file });
       if (res.status === 401) { handleExpired(); item.status = "error"; item.detail = "Sesión expirada"; err++; renderQueue(); break; }
       let data = {};
@@ -401,7 +387,7 @@ UPLOAD_BTN.addEventListener("click", async () => {
         warn++;
       } else if (data.reason === "locked") {
         item.status = "warn";
-        item.detail = "Guardado · PDF protegido, contraseña incorrecta";
+        item.detail = "No guardado · PDF protegido. Registra la contraseña en Telegram y vuelve a subirlo.";
         warn++;
       } else if (data.reason === "empty") {
         item.status = "warn";
@@ -644,16 +630,25 @@ export function startWebServer(options: WebServerOptions): void {
           let indexed = false;
           let reason: string | undefined;
           if (record.mimeType === "application/pdf") {
-            const pdfPassword = req.headers.get("x-pdf-password") || undefined;
             const result = await options.indexPdf.run({
               buffer,
               fileId: record.id,
               fileName: record.originalName,
               userId,
-              password: pdfPassword,
             });
             indexed = result.indexed;
             reason = result.reason;
+
+            // Passwords are managed only from Telegram. A locked PDF can't be
+            // indexed here, so we don't keep it — the user registers the
+            // password in the bot and re-uploads.
+            if (reason === "locked") {
+              await options.deleteDocument.run(record.id, userId);
+              return new Response(JSON.stringify({ ok: true, indexed: false, reason }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
           } else if (record.mimeType.startsWith("image/") || isImageBuffer(buffer)) {
             const result = await options.indexImage.run({
               buffer,
