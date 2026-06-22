@@ -154,6 +154,27 @@ export class BotApp {
         return;
       }
 
+      if (data === "pass:add") {
+        this.pendingPasswordAdd.add(userId);
+        await ctx.answerCallbackQuery();
+        await ctx.reply("🔑 Escribe la contraseña para PDFs que quieres guardar:");
+        return;
+      }
+
+      if (data === "pass:count") {
+        await ctx.answerCallbackQuery();
+        const n = this.vault.count();
+        await ctx.reply(`🔑 Contraseñas guardadas: ${n}`);
+        return;
+      }
+
+      if (data === "pass:clear") {
+        this.vault.clear();
+        await ctx.answerCallbackQuery("Contraseñas borradas");
+        await ctx.reply("🗑️ Se borraron todas las contraseñas guardadas.");
+        return;
+      }
+
       await ctx.answerCallbackQuery();
     });
 
@@ -293,8 +314,11 @@ export class BotApp {
       }
 
       if (text === "Contraseña") {
-        this.pendingPasswordAdd.add(ctx.from!.id);
-        await ctx.reply("🔑 Escribe la contraseña para PDFs que quieres guardar:");
+        const keyboard = new InlineKeyboard()
+          .text("Agregar", "pass:add")
+          .text("Contar", "pass:count")
+          .text("Borrar todo", "pass:clear");
+        await ctx.reply("🔑 Contraseñas:", { reply_markup: keyboard });
         return;
       }
 

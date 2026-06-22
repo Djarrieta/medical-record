@@ -56,6 +56,8 @@ export interface VectorIndex {
 export interface PasswordVault {
   add(password: string): void;
   getAll(): string[];
+  count(): number;
+  clear(): void;
 }
 
 // Persists free-form text notes (separate from documents). Notes are still
