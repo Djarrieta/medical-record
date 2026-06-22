@@ -47,11 +47,17 @@ export class SqliteDocumentRepository implements DocumentRepository {
     return dir;
   }
 
-  async save(userId: number, originalName: string, mimeType: string, buffer: Buffer): Promise<FileRecord> {
+  // Write a file's bytes to the user's directory and insert its metadata row.
+  // Shared by save() and saveStream() so the on-disk + DB layout stays in one place.
+  private async persist(
+    userId: number,
+    originalName: string,
+    mimeType: string,
+    buffer: Buffer,
+  ): Promise<FileRecord> {
     const id = crypto.randomUUID();
     const ext = extname(originalName);
-    const fileName = `${id}${ext}`;
-    const filePath = join(this.userDir(userId), fileName);
+    const filePath = join(this.userDir(userId), `${id}${ext}`);
 
     const written = await Bun.write(filePath, buffer);
 
@@ -75,38 +81,18 @@ export class SqliteDocumentRepository implements DocumentRepository {
     return record;
   }
 
+  async save(userId: number, originalName: string, mimeType: string, buffer: Buffer): Promise<FileRecord> {
+    return this.persist(userId, originalName, mimeType, buffer);
+  }
+
   async saveStream(
     userId: number,
     originalName: string,
     mimeType: string,
     stream: ReadableStream,
   ): Promise<FileRecord> {
-    const id = crypto.randomUUID();
-    const ext = extname(originalName);
-    const fileName = `${id}${ext}`;
-    const filePath = join(this.userDir(userId), fileName);
-
     const buffer = Buffer.from(await new Response(stream).arrayBuffer());
-    const written = await Bun.write(filePath, buffer);
-
-    const record: FileRecord = {
-      id,
-      userId,
-      originalName,
-      mimeType,
-      size: written,
-      path: filePath,
-      createdAt: new Date().toISOString(),
-      indexed: false,
-      hash: this.hash(buffer),
-    };
-
-    this.db.run(
-      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
-      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt, record.hash],
-    );
-
-    return record;
+    return this.persist(userId, originalName, mimeType, buffer);
   }
 
   list(userId: number): FileRecord[] {

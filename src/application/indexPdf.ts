@@ -8,6 +8,8 @@ import type {
   Titler,
   VectorIndex,
 } from "../domain/ports";
+import { embedAndIndex } from "./embedAndIndex";
+import { safeGenerateTitle } from "./safeGenerateTitle";
 
 export interface IndexPdfInput {
   buffer: Buffer;
@@ -57,28 +59,28 @@ export class IndexPdf {
       // Persist a newly supplied password only after it actually unlocks the PDF.
       if (password && candidate === password) this.vault.add(password);
 
-      let chunks = (await this.chunker.split(text)).filter((c) => c.trim().length > 0);
+      const deps = { chunker: this.chunker, embedder: this.embedder, vectorIndex: this.vectorIndex };
+
       let sourceText = text;
+      let indexed = await embedAndIndex(deps, text, fileId, fileName, userId);
 
       // A readable PDF with no extractable text is typically a scan/image-only
       // document. Fall back to OCR before giving up.
-      if (chunks.length === 0) {
+      if (!indexed) {
         const ocrText = await this.ocr.extract(buffer, candidate).catch((err) => {
           console.error("OCR failed:", err);
           return "";
         });
-        chunks = (await this.chunker.split(ocrText)).filter((c) => c.trim().length > 0);
         sourceText = ocrText;
+        indexed = await embedAndIndex(deps, ocrText, fileId, fileName, userId);
       }
 
       // Still nothing even after OCR — record it so the caller can tell the user.
-      if (chunks.length === 0) {
+      if (!indexed) {
         this.repo.setIndexed(fileId, false);
         return { indexed: false, reason: "empty" };
       }
 
-      const vectors = await this.embedder.embed(chunks);
-      await this.vectorIndex.index(chunks, vectors, fileId, fileName, userId);
       this.repo.setIndexed(fileId, true);
       await this.applyName(fileId, sourceText, fileName);
       return { indexed: true };
@@ -92,12 +94,7 @@ export class IndexPdf {
   // Best-effort: a failure here must never break indexing, so the record keeps
   // its original file name.
   private async applyName(fileId: string, text: string, originalName: string): Promise<void> {
-    if (!this.titler) return;
-    try {
-      const name = await this.titler.generate(text, originalName);
-      if (name) this.repo.setOriginalName(fileId, name);
-    } catch (err) {
-      console.error("applyName failed:", err);
-    }
+    const name = await safeGenerateTitle(this.titler, text, originalName);
+    if (name) this.repo.setOriginalName(fileId, name);
   }
 }

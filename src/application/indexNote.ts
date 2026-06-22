@@ -1,4 +1,6 @@
 import type { Chunker, Embedder, NoteRepository, Titler, VectorIndex } from "../domain/ports";
+import { embedAndIndex } from "./embedAndIndex";
+import { safeGenerateTitle } from "./safeGenerateTitle";
 
 export interface IndexNoteInput {
   text: string;
@@ -38,22 +40,16 @@ export class IndexNote {
     const { text, userId } = input;
 
     let title = (input.title ?? "").trim();
-    if (!title && this.titler) {
-      try {
-        title = (await this.titler.generate(text, "Nota")) ?? "";
-      } catch (err) {
-        console.error("Note title generation failed:", err);
-      }
+    if (!title) {
+      const generated = await safeGenerateTitle(this.titler, text, "Nota");
+      if (generated) title = generated;
     }
     if (!title) title = fallbackTitle(text);
 
     const note = this.notes.save(userId, text, title);
 
-    const chunks = (await this.chunker.split(text)).filter((c) => c.trim().length > 0);
-    if (chunks.length > 0) {
-      const vectors = await this.embedder.embed(chunks);
-      await this.vectorIndex.index(chunks, vectors, note.id, note.title, userId);
-    }
+    const deps = { chunker: this.chunker, embedder: this.embedder, vectorIndex: this.vectorIndex };
+    await embedAndIndex(deps, text, note.id, note.title, userId);
 
     return { noteId: note.id, title: note.title };
   }

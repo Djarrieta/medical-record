@@ -6,6 +6,8 @@ import type {
   Titler,
   VectorIndex,
 } from "../domain/ports";
+import { embedAndIndex } from "./embedAndIndex";
+import { safeGenerateTitle } from "./safeGenerateTitle";
 
 export interface IndexImageInput {
   buffer: Buffer;
@@ -45,25 +47,18 @@ export class IndexImage {
       return "";
     });
 
-    const chunks = (await this.chunker.split(text)).filter((c) => c.trim().length > 0);
+    const deps = { chunker: this.chunker, embedder: this.embedder, vectorIndex: this.vectorIndex };
+    const indexed = await embedAndIndex(deps, text, fileId, fileName, userId);
 
-    if (chunks.length === 0) {
+    if (!indexed) {
       this.repo.setIndexed(fileId, false);
       return { indexed: false, reason: "empty" };
     }
 
-    const vectors = await this.embedder.embed(chunks);
-    await this.vectorIndex.index(chunks, vectors, fileId, fileName, userId);
     this.repo.setIndexed(fileId, true);
 
-    if (this.titler) {
-      try {
-        const name = await this.titler.generate(text, fileName);
-        if (name) this.repo.setOriginalName(fileId, name);
-      } catch (err) {
-        console.error("applyName failed:", err);
-      }
-    }
+    const name = await safeGenerateTitle(this.titler, text, fileName);
+    if (name) this.repo.setOriginalName(fileId, name);
 
     return { indexed: true };
   }

@@ -96,6 +96,14 @@ export class BotApp {
     this.pendingPasswords.delete(userId);
   }
 
+  // Download the file referenced by the current update from Telegram's API.
+  private async downloadFile(ctx: Context): Promise<Buffer> {
+    const file = await ctx.getFile();
+    const url = `https://api.telegram.org/file/bot${this.config.botToken}/${file.file_path}`;
+    const res = await fetch(url);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   private registerHandlers(): void {
     this.bot.command("start", (ctx) => {
       this.clearPending(ctx.from!.id);
@@ -181,10 +189,7 @@ export class BotApp {
     this.bot.on(":document", async (ctx) => {
       try {
         const doc = ctx.message!.document!;
-        const file = await ctx.getFile();
-        const url = `https://api.telegram.org/file/bot${this.config.botToken}/${file.file_path}`;
-        const res = await fetch(url);
-        const buffer = Buffer.from(await res.arrayBuffer());
+        const buffer = await this.downloadFile(ctx);
 
         const mimeType = doc.mime_type ?? "application/octet-stream";
         const fileName = doc.file_name ?? "unknown";
@@ -254,10 +259,7 @@ export class BotApp {
       try {
         const photos = ctx.message!.photo!;
         const largest = photos[photos.length - 1];
-        const file = await ctx.getFile();
-        const url = `https://api.telegram.org/file/bot${this.config.botToken}/${file.file_path}`;
-        const res = await fetch(url);
-        const buffer = Buffer.from(await res.arrayBuffer());
+        const buffer = await this.downloadFile(ctx);
 
         const existing = this.repo.findByContent(buffer, ctx.from!.id);
         if (existing) {
