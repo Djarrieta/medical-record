@@ -80,7 +80,7 @@ export class IndexPdf {
       const vectors = await this.embedder.embed(chunks);
       await this.vectorIndex.index(chunks, vectors, fileId, fileName, userId);
       this.repo.setIndexed(fileId, true);
-      await this.applyTitle(fileId, sourceText, fileName);
+      await this.applyName(fileId, sourceText, fileName);
       return { indexed: true };
     }
 
@@ -88,16 +88,16 @@ export class IndexPdf {
     return { indexed: false, reason: "locked" };
   }
 
-  // Generate and persist a friendly title from the document's text. Best-effort:
-  // a failure here must never break indexing, so the record keeps its fallback
-  // title (the original file name).
-  private async applyTitle(fileId: string, text: string, originalName: string): Promise<void> {
+  // Generate a friendly name from the document's text and rename the file.
+  // Best-effort: a failure here must never break indexing, so the record keeps
+  // its original file name.
+  private async applyName(fileId: string, text: string, originalName: string): Promise<void> {
     if (!this.titler) return;
     try {
-      const title = await this.titler.generate(text, originalName);
-      if (title) this.repo.setTitle(fileId, title);
+      const name = await this.titler.generate(text, originalName);
+      if (name) this.repo.setOriginalName(fileId, name);
     } catch (err) {
-      console.error("applyTitle failed:", err);
+      console.error("applyName failed:", err);
     }
   }
 }

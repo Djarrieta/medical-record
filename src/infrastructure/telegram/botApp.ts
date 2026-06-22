@@ -405,7 +405,7 @@ export class BotApp {
     });
   }
 
-  // List the user's saved files as plain text (titles + original names).
+  // List the user's saved files as plain text (by file name).
   private async replyFilesList(ctx: Context): Promise<void> {
     const files = this.repo.list(ctx.from!.id);
     if (files.length === 0) {
@@ -413,13 +413,7 @@ export class BotApp {
       return;
     }
     const lines = files
-      .map((f, i) => {
-        const title = escapeHtml(f.title || f.originalName);
-        const name = escapeHtml(f.originalName);
-        return title === name
-          ? `${i + 1}. ${title}`
-          : `${i + 1}. <b>${title}</b>\n   <i>${name}</i>`;
-      })
+      .map((f, i) => `${i + 1}. ${escapeHtml(f.originalName)}`)
       .join("\n");
     await ctx.reply(`📂 Archivos guardados:\n\n${lines}`, { parse_mode: "HTML" });
   }

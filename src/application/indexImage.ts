@@ -58,10 +58,10 @@ export class IndexImage {
 
     if (this.titler) {
       try {
-        const title = await this.titler.generate(text, fileName);
-        if (title) this.repo.setTitle(fileId, title);
+        const name = await this.titler.generate(text, fileName);
+        if (name) this.repo.setOriginalName(fileId, name);
       } catch (err) {
-        console.error("applyTitle failed:", err);
+        console.error("applyName failed:", err);
       }
     }
 

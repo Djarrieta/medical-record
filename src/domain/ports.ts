@@ -17,13 +17,15 @@ export interface DocumentRepository {
   // (by SHA-256), or null.
   findByContent(buffer: Buffer, userId: number): FileRecord | null;
   setIndexed(id: string, indexed: boolean): void;
-  setTitle(id: string, title: string): void;
+  // Renames a file's logical name (originalName). The implementation keeps the
+  // original extension if `name` does not already include it.
+  setOriginalName(id: string, name: string): void;
   delete(id: string, userId: number): boolean;
 }
 
-// Produces a short, human-friendly title for a document from its extracted
-// text. Returns null when no useful title could be generated (caller keeps the
-// existing fallback, e.g. the original file name).
+// Produces a short, human-friendly name for a document from its extracted text.
+// Returns null when no useful name could be generated (caller keeps the
+// existing file name).
 export interface Titler {
   generate(text: string, originalName: string): Promise<string | null>;
 }

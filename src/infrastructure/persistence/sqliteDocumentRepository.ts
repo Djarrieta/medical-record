@@ -27,28 +27,12 @@ export class SqliteDocumentRepository implements DocumentRepository {
         path TEXT NOT NULL,
         created_at TEXT NOT NULL,
         indexed INTEGER NOT NULL DEFAULT 0,
-        sha256 TEXT NOT NULL DEFAULT '',
-        title TEXT NOT NULL DEFAULT ''
+        sha256 TEXT NOT NULL DEFAULT ''
       )
     `);
 
-    this.migrate();
-
     this.db.run("CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files (sha256)");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_files_user ON files (user_id)");
-  }
-
-  // Add columns introduced after the original schema, then backfill sensible
-  // defaults so existing rows keep working. ALTER TABLE ADD COLUMN is a no-op
-  // guard via the pragma check (SQLite can't "ADD COLUMN IF NOT EXISTS").
-  private migrate(): void {
-    const cols = this.db.query("PRAGMA table_info(files)").all() as { name: string }[];
-    const hasTitle = cols.some((c) => c.name === "title");
-    if (!hasTitle) {
-      this.db.run("ALTER TABLE files ADD COLUMN title TEXT NOT NULL DEFAULT ''");
-    }
-    // For any row without a title yet, fall back to its original file name.
-    this.db.run("UPDATE files SET title = original_name WHERE title = ''");
   }
 
   // SHA-256 hex digest of a file's content. Same bytes ⇒ same hash.
@@ -81,12 +65,11 @@ export class SqliteDocumentRepository implements DocumentRepository {
       createdAt: new Date().toISOString(),
       indexed: false,
       hash: this.hash(buffer),
-      title: originalName,
     };
 
     this.db.run(
-      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256, title) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
-      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt, record.hash, record.title],
+      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt, record.hash],
     );
 
     return record;
@@ -116,12 +99,11 @@ export class SqliteDocumentRepository implements DocumentRepository {
       createdAt: new Date().toISOString(),
       indexed: false,
       hash: this.hash(buffer),
-      title: originalName,
     };
 
     this.db.run(
-      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256, title) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
-      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt, record.hash, record.title],
+      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+      [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt, record.hash],
     );
 
     return record;
@@ -160,7 +142,6 @@ export class SqliteDocumentRepository implements DocumentRepository {
       createdAt: row.created_at as string,
       indexed: Boolean(row.indexed),
       hash: (row.sha256 as string) ?? "",
-      title: ((row.title as string) || (row.original_name as string)) ?? "",
     };
   }
 
@@ -168,8 +149,19 @@ export class SqliteDocumentRepository implements DocumentRepository {
     this.db.run("UPDATE files SET indexed = ? WHERE id = ?", [indexed ? 1 : 0, id]);
   }
 
-  setTitle(id: string, title: string): void {
-    this.db.run("UPDATE files SET title = ? WHERE id = ?", [title, id]);
+  // Renames a file's logical name. Keeps the current extension if `name` does
+  // not already end with it, so downloads keep opening with the right app.
+  setOriginalName(id: string, name: string): void {
+    const row = this.db
+      .query("SELECT original_name FROM files WHERE id = ?")
+      .get(id) as { original_name: string } | null;
+    if (!row) return;
+
+    const ext = extname(row.original_name);
+    const finalName =
+      ext && !name.toLowerCase().endsWith(ext.toLowerCase()) ? `${name}${ext}` : name;
+
+    this.db.run("UPDATE files SET original_name = ? WHERE id = ?", [finalName, id]);
   }
 
   delete(id: string, userId: number): boolean {

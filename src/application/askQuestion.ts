@@ -118,11 +118,7 @@ export class AskQuestion {
           const target = fileName.toLowerCase();
           const match = this.repo
             .list(userId)
-            .find(
-              (f) =>
-                f.originalName.toLowerCase() === target ||
-                f.title.toLowerCase() === target,
-            );
+            .find((f) => f.originalName.toLowerCase() === target);
           if (match) fileId = match.id;
         }
         if (!fileId) {
