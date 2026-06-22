@@ -58,7 +58,12 @@ export class IndexImage {
     this.repo.setIndexed(fileId, true);
 
     const name = await safeGenerateTitle(this.titler, text, fileName);
-    if (name) this.repo.setOriginalName(fileId, name);
+    if (name) {
+      this.repo.setOriginalName(fileId, name);
+      await this.vectorIndex.renameFile(fileId, name, userId).catch((err) => {
+        console.error("Vector index rename failed:", err);
+      });
+    }
 
     return { indexed: true };
   }

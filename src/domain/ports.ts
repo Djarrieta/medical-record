@@ -53,6 +53,9 @@ export interface VectorIndex {
   index(chunks: string[], vectors: number[][], fileId: string, fileName: string, userId: number): Promise<void>;
   search(vector: number[], userId: number, topK?: number): Promise<SearchResult[]>;
   deleteByFileId(fileId: string, userId: number): Promise<void>;
+  // Update the fileName payload of every chunk of a file, so the vector index
+  // stays in sync when the document is renamed (e.g. to an LLM-generated title).
+  renameFile(fileId: string, fileName: string, userId: number): Promise<void>;
 }
 
 export interface PasswordVault {

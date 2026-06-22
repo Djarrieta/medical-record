@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
 import { Config } from "./infrastructure/config";
-import { openAppDatabase, migrateLegacyDatabases } from "./infrastructure/persistence/sqliteDatabase";
+import { openAppDatabase } from "./infrastructure/persistence/sqliteDatabase";
 import { SqliteDocumentRepository } from "./infrastructure/persistence/sqliteDocumentRepository";
 import { SqlitePasswordVault } from "./infrastructure/persistence/sqlitePasswordVault";
 import { SqliteNoteRepository } from "./infrastructure/persistence/sqliteNoteRepository";
@@ -36,9 +36,6 @@ const db = openAppDatabase(cfg.dataDir);
 const repo = new SqliteDocumentRepository(db, cfg.dataDir);
 const vault = new SqlitePasswordVault(db);
 const notes = new SqliteNoteRepository(db);
-// One-time import of legacy metadata.db / passwords.db into app.db (no-op once
-// migrated). Runs after the tables above are created.
-migrateLegacyDatabases(db, cfg.dataDir);
 const extractor = new UnpdfTextExtractor();
 const ocr = new TesseractOcr();
 const chunker = new RecursiveChunker();

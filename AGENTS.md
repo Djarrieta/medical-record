@@ -36,7 +36,7 @@ Lightweight Clean Architecture (ports & adapters). Dependencies point inward: `i
 - **`src/infrastructure/`** — adapters implementing the ports (see below).
 - **Bot framework**: grammY v1 — `BotApp` class in `src/infrastructure/telegram/botApp.ts` (driver adapter; depends on use cases + `DocumentRepository`/`PasswordVault` ports).
 - **LLM**: LangChain `ChatOpenAI` via DeepSeek-compatible API — `DeepseekLlm` (implements `Llm`) in `src/infrastructure/llm/deepseekLlm.ts`.
-- **Shared SQLite**: all relational adapters share a single `bun:sqlite` database at `data/app.db` (WAL mode), opened once in `src/infrastructure/persistence/sqliteDatabase.ts` (`openAppDatabase`) and injected from `src/main.ts`. Each adapter still owns its own table(s) via `CREATE TABLE IF NOT EXISTS`. `migrateLegacyDatabases` does a one-time import of legacy `data/metadata.db`/`data/passwords.db` into `app.db` (renames them `*.migrated` when done).
+- **Shared SQLite**: all relational adapters share a single `bun:sqlite` database at `data/app.db` (WAL mode), opened once in `src/infrastructure/persistence/sqliteDatabase.ts` (`openAppDatabase`) and injected from `src/main.ts`. Each adapter still owns its own table(s) via `CREATE TABLE IF NOT EXISTS`.
 - **File storage**: `SqliteDocumentRepository` (implements `DocumentRepository`) in `src/infrastructure/persistence/sqliteDocumentRepository.ts` — saves files to `data/files/`, metadata in the shared `data/app.db` (`files` table). Takes the shared `Database` + `dataDir` in its constructor.
 - **PDF extraction**: `UnpdfTextExtractor` (implements `TextExtractor`) in `src/infrastructure/pdf/unpdfTextExtractor.ts` — uses `unpdf`.
 - **Text splitting**: `RecursiveChunker` (implements `Chunker`) in `src/infrastructure/text/recursiveChunker.ts` — `RecursiveCharacterTextSplitter`, `chunkSize` 1000, `chunkOverlap` 200.
@@ -78,7 +78,6 @@ The bot is **conversational, not command-driven** — `/start` is the only comma
 - Table: `files` (`SqliteDocumentRepository`) — id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256, title.
 - Table: `passwords` (`SqlitePasswordVault`) — remembered PDF passwords.
 - Table: `notes` (`SqliteNoteRepository`) — id, user_id, title, text, created_at.
-- Legacy `data/metadata.db`/`data/passwords.db` are auto-migrated into `app.db` on startup, then renamed `*.migrated`.
 - Files at `./data/files/<uuid>.<ext>`.
 - Qdrant vector index at `./data/qdrant/`.
 - Model cache at `./data/models/`.

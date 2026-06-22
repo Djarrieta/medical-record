@@ -77,4 +77,17 @@ export class QdrantVectorIndex implements VectorIndex {
       },
     });
   }
+
+  async renameFile(fileId: string, fileName: string, userId: number): Promise<void> {
+    await this.ensureCollection();
+    await this.client.setPayload(COLLECTION, {
+      payload: { fileName },
+      filter: {
+        must: [
+          { key: "fileId", match: { value: fileId } },
+          { key: "userId", match: { value: userId } },
+        ],
+      },
+    });
+  }
 }

@@ -82,7 +82,7 @@ export class IndexPdf {
       }
 
       this.repo.setIndexed(fileId, true);
-      await this.applyName(fileId, sourceText, fileName);
+      await this.applyName(fileId, sourceText, fileName, userId);
       return { indexed: true };
     }
 
@@ -92,9 +92,19 @@ export class IndexPdf {
 
   // Generate a friendly name from the document's text and rename the file.
   // Best-effort: a failure here must never break indexing, so the record keeps
-  // its original file name.
-  private async applyName(fileId: string, text: string, originalName: string): Promise<void> {
+  // its original file name. The vector index is renamed too so its fileName
+  // payload stays in sync with the stored document.
+  private async applyName(
+    fileId: string,
+    text: string,
+    originalName: string,
+    userId: number,
+  ): Promise<void> {
     const name = await safeGenerateTitle(this.titler, text, originalName);
-    if (name) this.repo.setOriginalName(fileId, name);
+    if (!name) return;
+    this.repo.setOriginalName(fileId, name);
+    await this.vectorIndex.renameFile(fileId, name, userId).catch((err) => {
+      console.error("Vector index rename failed:", err);
+    });
   }
 }
