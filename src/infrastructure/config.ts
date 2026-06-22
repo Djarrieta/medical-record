@@ -48,7 +48,7 @@ export class Config {
       deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
       dataDir: process.env.DATA_DIR ?? "./data",
       qdrantUrl: process.env.QDRANT_URL ?? "http://localhost:6333",
-      embeddingModel: process.env.EMBEDDING_MODEL ?? "Xenova/multilingual-e5-small",
+      embeddingModel: process.env.EMBEDDING_MODEL ?? "Xenova/multilingual-e5-base",
       webHost: process.env.WEB_HOST ?? "0.0.0.0",
       webPort,
       webUrl: process.env.WEB_URL ?? `http://localhost:${webPort}`,

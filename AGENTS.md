@@ -18,6 +18,7 @@
 - **Web UI**: always starts on `http://<host>:<port>` (`WEB_PORT` defaults to `3000`) for drag-and-drop file upload (bypasses Telegram's 50MB limit). Password-protected if `WEB_PASSWORD` is set. See `src/infrastructure/web/webServer.ts`.
 - **No test suite.** Validate changes with `bun run typeCheck`.
 - **Reset DB**: when the user says "reestablece la base de datos", "resetea los datos", "limpia los datos" or similar, run `./reset.sh`.
+- **Data is disposable — no backwards compatibility.** `./reset.sh` may be run at any time; deleting all existing data (DB, files, Qdrant, models) is always acceptable. Do NOT add migration code, legacy fallbacks, or data-preservation paths. Prefer the simplest implementation and let a reset wipe incompatible data (e.g. after an embedding-model or vector-dimension change).
 
 ## Environment & secrets
 
@@ -40,7 +41,7 @@ Lightweight Clean Architecture (ports & adapters). Dependencies point inward: `i
 - **File storage**: `SqliteDocumentRepository` (implements `DocumentRepository`) in `src/infrastructure/persistence/sqliteDocumentRepository.ts` — saves files to `data/files/`, metadata in the shared `data/app.db` (`files` table). Takes the shared `Database` + `dataDir` in its constructor.
 - **PDF extraction**: `UnpdfTextExtractor` (implements `TextExtractor`) in `src/infrastructure/pdf/unpdfTextExtractor.ts` — uses `unpdf`.
 - **Text splitting**: `RecursiveChunker` (implements `Chunker`) in `src/infrastructure/text/recursiveChunker.ts` — `RecursiveCharacterTextSplitter`, `chunkSize` 1000, `chunkOverlap` 200.
-- **Embeddings**: `TransformersEmbedder` (implements `Embedder`) in `src/infrastructure/embedding/transformersEmbedder.ts` — `@huggingface/transformers` pipeline (`Xenova/multilingual-e5-small`, 384-dim), model cached in `data/models/`. Uses E5 prefixes: `passage: ` for indexing, `query: ` for search.
+- **Embeddings**: `TransformersEmbedder` (implements `Embedder`) in `src/infrastructure/embedding/transformersEmbedder.ts` — `@huggingface/transformers` pipeline (`Xenova/multilingual-e5-base`, 768-dim), model cached in `data/models/`. Uses E5 prefixes: `passage: ` for indexing, `query: ` for search. The Qdrant collection's `VECTOR_SIZE` (`qdrantVectorIndex.ts`) must match the model's dimension; changing the model requires `./reset.sh` to recreate the collection.
 - **Vector DB**: `QdrantVectorIndex` (implements `VectorIndex`) in `src/infrastructure/vector/qdrantVectorIndex.ts` — Qdrant client, collection `documents`, Cosine distance.
 - **RAG**: `AskQuestion` use case in `src/application/askQuestion.ts` — retrieves top-5 chunks via `Embedder` + `VectorIndex`, answers via the `Llm` port. Prompt forces plain-text Spanish replies (no markdown).
 - **PDF passwords**: `SqlitePasswordVault` (implements `PasswordVault`) in `src/infrastructure/persistence/sqlitePasswordVault.ts` — remembers PDF passwords in the shared `data/app.db` (`passwords` table); tried automatically by `IndexPdf` on locked PDFs before prompting the user. Takes the shared `Database` in its constructor.
