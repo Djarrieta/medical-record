@@ -20,6 +20,10 @@ export interface DocumentRepository {
   // Renames a file's logical name (originalName). The implementation keeps the
   // original extension if `name` does not already include it.
   setOriginalName(id: string, name: string): void;
+  // Replaces a file's tags (source of truth in SQLite).
+  setTags(id: string, tags: string[]): void;
+  // Distinct tags across the user's files (for listing available filters).
+  listTags(userId: number): string[];
   delete(id: string, userId: number): boolean;
 }
 
@@ -28,6 +32,13 @@ export interface DocumentRepository {
 // existing file name).
 export interface Titler {
   generate(text: string, originalName: string): Promise<string | null>;
+}
+
+// Extracts a small set of canonical medical tags from a document's text
+// (organs/body zones, procedures/exam types, specialty, and the document date
+// as a YYYY-MM-DD tag). Best-effort: returns [] when nothing useful is found.
+export interface Tagger {
+  generate(text: string): Promise<string[]>;
 }
 
 export interface TextExtractor {
@@ -53,11 +64,14 @@ export interface Embedder {
 
 export interface VectorIndex {
   index(chunks: string[], vectors: number[][], fileId: string, fileName: string, userId: number): Promise<void>;
-  search(vector: number[], userId: number, topK?: number): Promise<SearchResult[]>;
+  search(vector: number[], userId: number, topK?: number, tags?: string[]): Promise<SearchResult[]>;
   deleteByFileId(fileId: string, userId: number): Promise<void>;
   // Update the fileName payload of every chunk of a file, so the vector index
   // stays in sync when the document is renamed (e.g. to an LLM-generated title).
   renameFile(fileId: string, fileName: string, userId: number): Promise<void>;
+  // Update the tags payload of every chunk of a document, keeping the vector
+  // index in sync with the source of truth in SQLite.
+  setTags(fileId: string, tags: string[], userId: number): Promise<void>;
 }
 
 export interface PasswordVault {
@@ -73,6 +87,10 @@ export interface NoteRepository {
   save(userId: number, text: string, title: string): Note;
   list(userId: number): Note[];
   get(id: string, userId: number): Note | null;
+  // Replaces a note's tags (source of truth in SQLite).
+  setTags(id: string, tags: string[]): void;
+  // Distinct tags across the user's notes (for listing available filters).
+  listTags(userId: number): string[];
   delete(id: string, userId: number): boolean;
 }
 

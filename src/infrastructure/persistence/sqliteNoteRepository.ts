@@ -3,6 +3,17 @@ import { Database } from "bun:sqlite";
 import type { Note } from "../../domain/types";
 import type { NoteRepository } from "../../domain/ports";
 
+// Parses a JSON tags column into a string[], tolerating malformed/legacy data.
+function parseTags(raw: unknown): string[] {
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.map((x) => String(x)) : [];
+  } catch {
+    return [];
+  }
+}
+
 export class SqliteNoteRepository implements NoteRepository {
   private db: Database;
 
@@ -15,7 +26,8 @@ export class SqliteNoteRepository implements NoteRepository {
         user_id INTEGER NOT NULL,
         title TEXT NOT NULL DEFAULT '',
         text TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        tags TEXT NOT NULL DEFAULT '[]'
       )
     `);
     this.db.run("CREATE INDEX IF NOT EXISTS idx_notes_user ON notes (user_id)");
@@ -28,9 +40,10 @@ export class SqliteNoteRepository implements NoteRepository {
       title,
       text,
       createdAt: new Date().toISOString(),
+      tags: [],
     };
     this.db.run(
-      "INSERT INTO notes (id, user_id, title, text, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO notes (id, user_id, title, text, created_at, tags) VALUES (?, ?, ?, ?, ?, '[]')",
       [note.id, note.userId, note.title, note.text, note.createdAt],
     );
     return note;
@@ -57,6 +70,17 @@ export class SqliteNoteRepository implements NoteRepository {
     return true;
   }
 
+  setTags(id: string, tags: string[]): void {
+    this.db.run("UPDATE notes SET tags = ? WHERE id = ?", [JSON.stringify(tags), id]);
+  }
+
+  listTags(userId: number): string[] {
+    const rows = this.db
+      .query("SELECT DISTINCT value AS tag FROM notes, json_each(notes.tags) WHERE user_id = ? ORDER BY value")
+      .all(userId) as { tag: string }[];
+    return rows.map((r) => r.tag);
+  }
+
   private mapRow(row: Record<string, unknown>): Note {
     return {
       id: row.id as string,
@@ -64,6 +88,7 @@ export class SqliteNoteRepository implements NoteRepository {
       title: ((row.title as string) || "") as string,
       text: row.text as string,
       createdAt: row.created_at as string,
+      tags: parseTags(row.tags),
     };
   }
 }

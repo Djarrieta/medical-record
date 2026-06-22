@@ -13,6 +13,7 @@ import { QdrantVectorIndex } from "./infrastructure/vector/qdrantVectorIndex";
 import { RecursiveChunker } from "./infrastructure/text/recursiveChunker";
 import { DeepseekLlm } from "./infrastructure/llm/deepseekLlm";
 import { LlmTitler } from "./infrastructure/llm/llmTitler";
+import { LlmTagger } from "./infrastructure/llm/llmTagger";
 import { InMemorySessionStore } from "./infrastructure/session/sessionStore";
 import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
@@ -54,18 +55,20 @@ const vectorIndex = new QdrantVectorIndex(cfg.qdrantUrl, embedder.dimensions());
 
 // Title generation is optional — only available when an LLM is configured.
 const titler = cfg.deepseekApiKey ? new LlmTitler(cfg) : null;
+// Tag generation is optional too, on the same LLM availability.
+const tagger = cfg.deepseekApiKey ? new LlmTagger(cfg) : null;
 
 // --- Use cases (application) ---
-const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo, ocr, titler);
-const indexImage = new IndexImage(ocr, chunker, embedder, vectorIndex, repo, titler);
-const indexNote = new IndexNote(chunker, embedder, vectorIndex, notes, titler);
+const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo, ocr, titler, tagger);
+const indexImage = new IndexImage(ocr, chunker, embedder, vectorIndex, repo, titler, tagger);
+const indexNote = new IndexNote(chunker, embedder, vectorIndex, notes, titler, tagger);
 const deleteNote = new DeleteNote(notes, vectorIndex);
 const deleteDocument = new DeleteDocument(repo, vectorIndex);
 
 let askQuestion: AskQuestion | null = null;
 if (cfg.deepseekApiKey) {
   const llm = new DeepseekLlm(cfg);
-  askQuestion = new AskQuestion(embedder, vectorIndex, llm, repo, sessions);
+  askQuestion = new AskQuestion(embedder, vectorIndex, llm, repo, sessions, notes);
 }
 
 // --- Driver adapters ---
@@ -124,8 +127,11 @@ startWebServer({
   port: cfg.webPort,
   host: cfg.webHost,
   repo,
+  notes,
   indexPdf,
   indexImage,
   deleteDocument,
+  deleteNote,
+  vectorIndex,
   sessions,
 });

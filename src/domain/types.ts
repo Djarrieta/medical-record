@@ -9,6 +9,8 @@ export interface FileRecord {
   indexed: boolean;
   // SHA-256 hex digest of the file's content, used for duplicate detection.
   hash: string;
+  // Free-form medical tags (lowercase, deduped). May include a YYYY-MM-DD date.
+  tags: string[];
 }
 
 export interface PendingPassword {
@@ -24,6 +26,8 @@ export interface Note {
   title: string;
   text: string;
   createdAt: string;
+  // Free-form medical tags (lowercase, deduped). May include a YYYY-MM-DD date.
+  tags: string[];
 }
 
 export interface ChunkMetadata {
@@ -31,6 +35,8 @@ export interface ChunkMetadata {
   fileId: string;
   fileName: string;
   userId: number;
+  // Document-level tags mirrored onto every chunk so search can filter by them.
+  tags: string[];
 }
 
 export type SearchResult = ChunkMetadata & { score: number };

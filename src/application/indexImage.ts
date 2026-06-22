@@ -3,11 +3,13 @@ import type {
   DocumentRepository,
   Embedder,
   Ocr,
+  Tagger,
   Titler,
   VectorIndex,
 } from "../domain/ports";
 import { embedAndIndex } from "./embedAndIndex";
 import { safeGenerateTitle } from "./safeGenerateTitle";
+import { safeGenerateTags } from "./safeGenerateTags";
 
 export interface IndexImageInput {
   buffer: Buffer;
@@ -37,6 +39,7 @@ export class IndexImage {
     private readonly vectorIndex: VectorIndex,
     private readonly repo: DocumentRepository,
     private readonly titler: Titler | null = null,
+    private readonly tagger: Tagger | null = null,
   ) {}
 
   async run(input: IndexImageInput): Promise<IndexImageResult> {
@@ -62,6 +65,14 @@ export class IndexImage {
       this.repo.setOriginalName(fileId, name);
       await this.vectorIndex.renameFile(fileId, name, userId).catch((err) => {
         console.error("Vector index rename failed:", err);
+      });
+    }
+
+    const tags = await safeGenerateTags(this.tagger, text);
+    if (tags.length > 0) {
+      this.repo.setTags(fileId, tags);
+      await this.vectorIndex.setTags(fileId, tags, userId).catch((err) => {
+        console.error("Vector index setTags failed:", err);
       });
     }
 

@@ -1,6 +1,7 @@
-import type { Chunker, Embedder, NoteRepository, Titler, VectorIndex } from "../domain/ports";
+import type { Chunker, Embedder, NoteRepository, Tagger, Titler, VectorIndex } from "../domain/ports";
 import { embedAndIndex } from "./embedAndIndex";
 import { safeGenerateTitle } from "./safeGenerateTitle";
+import { safeGenerateTags } from "./safeGenerateTags";
 
 export interface IndexNoteInput {
   text: string;
@@ -34,6 +35,7 @@ export class IndexNote {
     private readonly vectorIndex: VectorIndex,
     private readonly notes: NoteRepository,
     private readonly titler: Titler | null = null,
+    private readonly tagger: Tagger | null = null,
   ) {}
 
   async run(input: IndexNoteInput): Promise<IndexNoteResult> {
@@ -50,6 +52,14 @@ export class IndexNote {
 
     const deps = { chunker: this.chunker, embedder: this.embedder, vectorIndex: this.vectorIndex };
     await embedAndIndex(deps, text, note.id, note.title, userId);
+
+    const tags = await safeGenerateTags(this.tagger, text);
+    if (tags.length > 0) {
+      this.notes.setTags(note.id, tags);
+      await this.vectorIndex.setTags(note.id, tags, userId).catch((err) => {
+        console.error("Vector index setTags failed:", err);
+      });
+    }
 
     return { noteId: note.id, title: note.title };
   }

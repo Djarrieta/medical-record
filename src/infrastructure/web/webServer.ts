@@ -1,17 +1,34 @@
-import type { DocumentRepository, SessionStore } from "../../domain/ports";
+import type { DocumentRepository, NoteRepository, SessionStore, VectorIndex } from "../../domain/ports";
 import type { IndexPdf } from "../../application/indexPdf";
 import type { IndexImage } from "../../application/indexImage";
 import type { DeleteDocument } from "../../application/deleteDocument";
+import type { DeleteNote } from "../../application/deleteNote";
 import { isImageBuffer } from "../util/fileType";
+import { normalizeTags } from "../../domain/tags";
 
 interface WebServerOptions {
   port: number;
   host: string;
   repo: DocumentRepository;
+  notes: NoteRepository;
   indexPdf: IndexPdf;
   indexImage: IndexImage;
   deleteDocument: DeleteDocument;
+  deleteNote: DeleteNote;
+  vectorIndex: VectorIndex;
   sessions: SessionStore;
+}
+
+// Reads and normalizes a `{ tags: string[] }` JSON body. Returns null on any
+// malformed input so the caller can reply 400.
+async function readTagsBody(req: Request): Promise<string[] | null> {
+  try {
+    const body = (await req.json()) as { tags?: unknown };
+    if (!Array.isArray(body.tags)) return null;
+    return normalizeTags(body.tags.map((t) => String(t)));
+  } catch {
+    return null;
+  }
 }
 
 function htmlPage(): string {
@@ -130,6 +147,42 @@ function htmlPage(): string {
   .status-done { color: var(--primary); }
   .status-error { color: var(--danger); }
 
+  /* Tags */
+  .tags { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; align-items: center; }
+  .tag {
+    display: inline-flex; align-items: center; gap: .25rem;
+    font-size: .72rem; font-weight: 550; line-height: 1;
+    background: var(--primary-tint); color: var(--primary-d);
+    padding: .22rem .5rem; border-radius: 999px; border: 1px solid transparent;
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .tag:hover { border-color: var(--primary); }
+  .tag.active { background: var(--primary); color: #fff; }
+  .tag .x {
+    cursor: pointer; font-weight: 700; opacity: .6; padding-left: .1rem;
+    display: inline-grid; place-items: center;
+  }
+  .tag .x:hover { opacity: 1; }
+  .tag-add {
+    font-size: .72rem; font-weight: 600; color: var(--muted);
+    background: #eef3f1; border: 1px dashed #cdded7; border-radius: 999px;
+    padding: .2rem .5rem; cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  .tag-add:hover { color: var(--primary); border-color: var(--primary); }
+  .tag-input {
+    font: inherit; font-size: .72rem; padding: .18rem .45rem; width: 9rem;
+    border: 1px solid var(--primary); border-radius: 999px; background: #fff; color: var(--ink);
+  }
+  .tag-input:focus { outline: 2px solid var(--primary-tint); }
+  .filter-bar {
+    display: none; align-items: center; gap: .5rem; margin-bottom: .6rem;
+    font-size: .8rem; color: var(--muted);
+  }
+  .filter-bar.show { display: flex; }
+  .filter-bar .clear {
+    margin-left: auto; cursor: pointer; color: var(--primary); font-weight: 600;
+  }
+
   /* Files admin */
   .files-head { display: flex; align-items: center; gap: .6rem; margin-bottom: .9rem; }
   .files-head h2 { font-size: 1.05rem; font-weight: 600; }
@@ -225,7 +278,24 @@ function htmlPage(): string {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
       <input id="searchInput" type="search" placeholder="Buscar por nombre…" autocomplete="off">
     </div>
+    <div id="filterBar" class="filter-bar">
+      <span>Filtrando por tag:</span>
+      <span id="filterTag" class="tag active"></span>
+      <span id="filterClear" class="clear">Quitar filtro</span>
+    </div>
     <ul id="savedFiles" class="list"></ul>
+  </section>
+
+  <section class="card">
+    <div class="files-head">
+      <h2>Notas</h2>
+      <span id="notesCountChip" class="count-chip">0</span>
+      <span class="spacer"></span>
+      <button id="refreshNotesBtn" class="icon-btn" title="Actualizar" aria-label="Actualizar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+      </button>
+    </div>
+    <ul id="notesList" class="list"></ul>
   </section>
 </div>
 
@@ -253,6 +323,12 @@ const REFRESH_BTN = document.getElementById("refreshBtn");
 const SEARCH_INPUT = document.getElementById("searchInput");
 const COUNT_CHIP = document.getElementById("countChip");
 const TOAST = document.getElementById("toast");
+const FILTER_BAR = document.getElementById("filterBar");
+const FILTER_TAG = document.getElementById("filterTag");
+const FILTER_CLEAR = document.getElementById("filterClear");
+const NOTES_LIST = document.getElementById("notesList");
+const NOTES_COUNT = document.getElementById("notesCountChip");
+const REFRESH_NOTES_BTN = document.getElementById("refreshNotesBtn");
 
 // Auth comes from the URL: /u/<userId>?token=<sessionToken>.
 const PATH_MATCH = window.location.pathname.match(/\\/u\\/(\\d+)/);
@@ -263,14 +339,18 @@ const ICON_DOC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 const ICON_IMG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>';
 const ICON_VIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
 const ICON_DEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+const ICON_NOTE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12l-4 4H4z"/><path d="M16 20v-4h4"/><path d="M8 9h8M8 13h5"/></svg>';
 
 let queue = [];
 let uploading = false;
 let savedData = [];
+let notesData = [];
+let activeTag = "";
 let toastTimer = null;
 let sessionExpired = false;
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML; }
+function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
 
 // Append the auth params (userId + token) to any API URL.
 function authQuery(extra) {
@@ -427,14 +507,104 @@ UPLOAD_BTN.addEventListener("click", async () => {
   loadSavedFiles();
 });
 
+/* ---------- Tags (files + notes) ---------- */
+function renderTags(tags, kind, id) {
+  const chips = (tags || []).map(t =>
+    '<span class="tag' + (t === activeTag ? ' active' : '') + '" data-tagfilter="' + escAttr(t) + '">' +
+    esc(t) +
+    '<span class="x" data-kind="' + kind + '" data-id="' + escAttr(id) + '" data-tagdel="' + escAttr(t) + '" title="Quitar">✕</span>' +
+    '</span>'
+  ).join("");
+  return '<div class="tags">' + chips +
+    '<span class="tag-add" data-kind="' + kind + '" data-id="' + escAttr(id) + '">+ tag</span></div>';
+}
+
+function wireTags(container) {
+  container.querySelectorAll("[data-tagfilter]").forEach(el => {
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("[data-tagdel]")) return;
+      setFilter(el.dataset.tagfilter);
+    });
+  });
+  container.querySelectorAll("[data-tagdel]").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeTag(el.dataset.kind, el.dataset.id, el.dataset.tagdel);
+    });
+  });
+  container.querySelectorAll(".tag-add").forEach(el => {
+    el.addEventListener("click", () => startAddTag(el));
+  });
+}
+
+function entityList(kind) { return kind === "note" ? notesData : savedData; }
+function reRender(kind) { if (kind === "note") renderNotes(); else renderSaved(); }
+
+async function patchTags(kind, id, tags) {
+  try {
+    const res = await fetch("/api/" + kind + "s/" + encodeURIComponent(id) + "/tags?" + authQuery(), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags }),
+    });
+    if (res.status === 401) { handleExpired(); return; }
+    if (!res.ok) { showToast("No se pudieron guardar los tags"); return; }
+    const data = await res.json();
+    const entity = entityList(kind).find(x => x.id === id);
+    if (entity) entity.tags = data.tags || tags;
+    reRender(kind);
+  } catch { showToast("No se pudieron guardar los tags"); }
+}
+
+function removeTag(kind, id, tag) {
+  const entity = entityList(kind).find(x => x.id === id);
+  if (!entity) return;
+  patchTags(kind, id, (entity.tags || []).filter(t => t !== tag));
+}
+
+function startAddTag(btn) {
+  const kind = btn.dataset.kind, id = btn.dataset.id;
+  const input = document.createElement("input");
+  input.className = "tag-input";
+  input.placeholder = "nuevo tag";
+  btn.replaceWith(input);
+  input.focus();
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    const val = input.value.trim().toLowerCase();
+    const entity = entityList(kind).find(x => x.id === id);
+    if (!val || !entity || (entity.tags || []).includes(val)) { reRender(kind); return; }
+    patchTags(kind, id, (entity.tags || []).concat(val));
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { done = true; reRender(kind); }
+  });
+  input.addEventListener("blur", commit);
+}
+
+function setFilter(tag) {
+  activeTag = tag;
+  FILTER_TAG.textContent = tag;
+  FILTER_BAR.classList.add("show");
+  renderSaved();
+}
+FILTER_CLEAR.addEventListener("click", () => {
+  activeTag = "";
+  FILTER_BAR.classList.remove("show");
+  renderSaved();
+});
+
 /* ---------- Files admin ---------- */
 function renderSaved() {
   const q = SEARCH_INPUT.value.trim().toLowerCase();
-  const items = q
-    ? savedData.filter(f =>
-        (f.title || "").toLowerCase().includes(q) ||
-        (f.originalName || "").toLowerCase().includes(q))
-    : savedData;
+  let items = savedData;
+  if (q) items = items.filter(f =>
+    (f.title || "").toLowerCase().includes(q) ||
+    (f.originalName || "").toLowerCase().includes(q));
+  if (activeTag) items = items.filter(f => (f.tags || []).includes(activeTag));
   COUNT_CHIP.textContent = String(savedData.length);
 
   if (!savedData.length) {
@@ -442,7 +612,7 @@ function renderSaved() {
     return;
   }
   if (!items.length) {
-    SAVED_FILES.innerHTML = '<li class="empty">Ningún archivo coincide con la búsqueda.</li>';
+    SAVED_FILES.innerHTML = '<li class="empty">Ningún archivo coincide con el filtro.</li>';
     return;
   }
 
@@ -461,7 +631,9 @@ function renderSaved() {
       (showOriginal ? '<span title="Nombre original">' + esc(f.originalName) + '</span>' : '') +
       '<span>' + typeLabel(f.mimeType) + '</span>' +
       '<span>' + formatSize(f.size) + '</span>' +
-      '<span>' + formatDate(f.createdAt) + '</span></div></div>' +
+      '<span>' + formatDate(f.createdAt) + '</span></div>' +
+      renderTags(f.tags, "file", f.id) +
+      '</div>' +
       indexed +
       '<div class="actions">' +
       '<button class="icon-btn" data-view="' + f.id + '" title="Ver" aria-label="Ver">' + ICON_VIEW + '</button>' +
@@ -469,6 +641,7 @@ function renderSaved() {
       '</div></li>';
   }).join("");
 
+  wireTags(SAVED_FILES);
   SAVED_FILES.querySelectorAll("[data-view]").forEach(btn => {
     btn.addEventListener("click", () => window.open(rawUrl(btn.dataset.view, false), "_blank"));
   });
@@ -499,9 +672,60 @@ async function loadSavedFiles() {
   } catch {}
 }
 
+/* ---------- Notes admin ---------- */
+function renderNotes() {
+  NOTES_COUNT.textContent = String(notesData.length);
+  if (!notesData.length) {
+    NOTES_LIST.innerHTML = '<li class="empty">Aún no hay notas. Crea una desde Telegram con el botón Nota.</li>';
+    return;
+  }
+  NOTES_LIST.innerHTML = notesData.map(n => {
+    const title = n.title || "Nota";
+    const raw = (n.text || "").replace(/\\s+/g, " ").trim();
+    const excerpt = raw.slice(0, 120) + (raw.length > 120 ? "…" : "");
+    return '<li class="row"><div class="fi">' + ICON_NOTE + '</div>' +
+      '<div class="body"><div class="name">' + esc(title) + '</div>' +
+      '<div class="meta"><span>' + esc(excerpt) + '</span></div>' +
+      renderTags(n.tags, "note", n.id) +
+      '</div>' +
+      '<div class="actions">' +
+      '<button class="icon-btn danger" data-delnote="' + n.id + '" title="Eliminar" aria-label="Eliminar">' + ICON_DEL + '</button>' +
+      '</div></li>';
+  }).join("");
+
+  wireTags(NOTES_LIST);
+  NOTES_LIST.querySelectorAll("[data-delnote]").forEach(btn => {
+    btn.addEventListener("click", () => deleteNote(btn.dataset.delnote));
+  });
+}
+
+async function deleteNote(id) {
+  const note = notesData.find(n => n.id === id);
+  const name = note ? (note.title || "esta nota") : "esta nota";
+  if (!confirm("¿Eliminar \\"" + name + "\\"? Esta acción no se puede deshacer.")) return;
+  try {
+    const res = await fetch("/api/notes/" + encodeURIComponent(id) + "?" + authQuery(), { method: "DELETE" });
+    if (res.status === 401) { handleExpired(); return; }
+    if (res.ok) { showToast("Nota eliminada"); loadNotes(); }
+    else showToast("No se pudo eliminar");
+  } catch { showToast("No se pudo eliminar"); }
+}
+
+async function loadNotes() {
+  try {
+    const res = await fetch("/api/notes?" + authQuery());
+    if (res.status === 401) { handleExpired(); return; }
+    if (!res.ok) return;
+    notesData = await res.json();
+    renderNotes();
+  } catch {}
+}
+
 SEARCH_INPUT.addEventListener("input", renderSaved);
 REFRESH_BTN.addEventListener("click", loadSavedFiles);
+REFRESH_NOTES_BTN.addEventListener("click", loadNotes);
 loadSavedFiles();
+loadNotes();
 </script>
 </body>
 </html>`;
@@ -543,6 +767,84 @@ export function startWebServer(options: WebServerOptions): void {
         if (userId === null) return new Response("Unauthorized", { status: 401 });
         const files = options.repo.list(userId);
         return new Response(JSON.stringify(files), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Replace a file's tags (source of truth in SQLite, mirrored to Qdrant).
+      if (
+        method === "PATCH" &&
+        url.pathname.startsWith("/api/files/") &&
+        url.pathname.endsWith("/tags")
+      ) {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const id = url.pathname.slice(
+          "/api/files/".length,
+          url.pathname.length - "/tags".length,
+        );
+        const record = options.repo.get(id, userId);
+        if (!record) return new Response("Not found", { status: 404 });
+
+        const tags = await readTagsBody(req);
+        if (tags === null) {
+          return new Response(JSON.stringify({ ok: false, error: "Invalid tags" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        options.repo.setTags(id, tags);
+        await options.vectorIndex.setTags(id, tags, userId).catch(() => {});
+        return new Response(JSON.stringify({ ok: true, tags }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // --- Notes ---
+      if (method === "GET" && url.pathname === "/api/notes") {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const notes = options.notes.list(userId);
+        return new Response(JSON.stringify(notes), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (
+        method === "PATCH" &&
+        url.pathname.startsWith("/api/notes/") &&
+        url.pathname.endsWith("/tags")
+      ) {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const id = url.pathname.slice(
+          "/api/notes/".length,
+          url.pathname.length - "/tags".length,
+        );
+        const note = options.notes.get(id, userId);
+        if (!note) return new Response("Not found", { status: 404 });
+
+        const tags = await readTagsBody(req);
+        if (tags === null) {
+          return new Response(JSON.stringify({ ok: false, error: "Invalid tags" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        options.notes.setTags(id, tags);
+        await options.vectorIndex.setTags(id, tags, userId).catch(() => {});
+        return new Response(JSON.stringify({ ok: true, tags }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (method === "DELETE" && url.pathname.startsWith("/api/notes/")) {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const id = url.pathname.slice("/api/notes/".length);
+        const deleted = await options.deleteNote.run(id, userId);
+        if (!deleted) return new Response("Not found", { status: 404 });
+        return new Response(JSON.stringify({ ok: true }), {
           headers: { "Content-Type": "application/json" },
         });
       }

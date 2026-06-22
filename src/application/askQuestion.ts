@@ -1,8 +1,9 @@
 import type { FileRecord } from "../domain/types";
-import type { DocumentRepository, Embedder, Llm, SessionStore, Tool, VectorIndex } from "../domain/ports";
+import type { DocumentRepository, Embedder, Llm, NoteRepository, SessionStore, Tool, VectorIndex } from "../domain/ports";
 
 const SYSTEM_PROMPT = `Eres un asistente médico que responde preguntas sobre los documentos clínicos del paciente.
 Tienes la herramienta "search_medical_records" para buscar fragmentos en los documentos indexados. Úsala SIEMPRE (una o varias veces, reformulando la búsqueda si hace falta) antes de responder.
+Cada documento y nota tiene "tags": términos médicos (órganos o zonas del cuerpo, procedimientos o tipos de examen, especialidad) y, cuando existe, la fecha del documento en formato AAAA-MM-DD. Puedes filtrar la búsqueda pasando "tags" para acotar a documentos con esos términos (ej. tags ["orina"] para exámenes de orina). Usa la herramienta "list_available_tags" para ver qué tags existen antes de filtrar; si no estás seguro, busca sin filtro.
 Responde de forma directa y concisa: contesta únicamente lo que se te pregunta, sin agregar contexto, explicaciones ni datos que no te pidieron.
 Si no encuentras la respuesta, dilo en una frase. No ofrezcas seguir buscando ni hagas preguntas de seguimiento.
 Si el paciente pide que le envíes, reenvíes, mandes o muestres un documento original (por ejemplo "mándame el documento"), usa la herramienta "send_original_document" con el nombre exacto del archivo. Esto es útil cuando el dato puede estar manuscrito o no ser legible en el texto indexado.
@@ -29,6 +30,7 @@ export class AskQuestion {
     private readonly llm: Llm,
     private readonly repo: DocumentRepository,
     private readonly sessions: SessionStore,
+    private readonly notes: NoteRepository,
   ) {}
 
   async run(question: string, userId: number): Promise<AskResult> {
@@ -55,6 +57,13 @@ export class AskQuestion {
             type: "integer",
             description: "Número máximo de fragmentos a recuperar (por defecto 5).",
           },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Filtro opcional: solo fragmentos cuyo documento tenga alguno de estos tags " +
+              "(ver list_available_tags). Las fechas van en formato AAAA-MM-DD.",
+          },
         },
         required: ["query"],
       },
@@ -63,8 +72,11 @@ export class AskQuestion {
         if (!query) return JSON.stringify({ results: [], note: "Consulta vacía." });
 
         const topK = Number.isFinite(Number(args.topK)) ? Number(args.topK) : 5;
+        const tags = Array.isArray(args.tags)
+          ? args.tags.map((t) => String(t).trim().toLowerCase()).filter((t) => t.length > 0)
+          : undefined;
         const queryVector = await this.embedder.embedQuery(query);
-        const results = await this.vectorIndex.search(queryVector, userId, topK);
+        const results = await this.vectorIndex.search(queryVector, userId, topK, tags);
 
         for (const r of results) {
           if (!cited.has(r.fileName) || r.score > cited.get(r.fileName)!) {
@@ -82,6 +94,7 @@ export class AskQuestion {
             score: Number((r.score * 100).toFixed(1)),
             fileName: r.fileName,
             text: r.text,
+            tags: r.tags ?? [],
           })),
         });
       },
@@ -136,8 +149,26 @@ export class AskQuestion {
       },
     };
 
+    const listTagsTool: Tool = {
+      name: "list_available_tags",
+      description:
+        "Lista los tags disponibles del paciente (de sus documentos y notas). " +
+        "Úsala para saber por qué términos puedes filtrar en search_medical_records.",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        const tags = Array.from(
+          new Set([...this.repo.listTags(userId), ...this.notes.listTags(userId)]),
+        ).sort();
+        return JSON.stringify({ tags });
+      },
+    };
+
     const history = this.sessions.history(userId);
-    const answer = await this.llm.answer(SYSTEM_PROMPT, history, question, [searchTool, sendTool]);
+    const answer = await this.llm.answer(SYSTEM_PROMPT, history, question, [
+      searchTool,
+      sendTool,
+      listTagsTool,
+    ]);
     const documents = Array.from(toSend.values());
 
     const now = new Date().toISOString();

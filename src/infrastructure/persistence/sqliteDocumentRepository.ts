@@ -5,6 +5,17 @@ import { join, extname } from "path";
 import type { FileRecord } from "../../domain/types";
 import type { DocumentRepository } from "../../domain/ports";
 
+// Parses a JSON tags column into a string[], tolerating malformed/legacy data.
+function parseTags(raw: unknown): string[] {
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.map((x) => String(x)) : [];
+  } catch {
+    return [];
+  }
+}
+
 export class SqliteDocumentRepository implements DocumentRepository {
   private db: Database;
   private filesDir: string;
@@ -27,7 +38,8 @@ export class SqliteDocumentRepository implements DocumentRepository {
         path TEXT NOT NULL,
         created_at TEXT NOT NULL,
         indexed INTEGER NOT NULL DEFAULT 0,
-        sha256 TEXT NOT NULL DEFAULT ''
+        sha256 TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT '[]'
       )
     `);
 
@@ -71,10 +83,11 @@ export class SqliteDocumentRepository implements DocumentRepository {
       createdAt: new Date().toISOString(),
       indexed: false,
       hash: this.hash(buffer),
+      tags: [],
     };
 
     this.db.run(
-      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+      "INSERT INTO files (id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256, tags) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '[]')",
       [record.id, record.userId, record.originalName, record.mimeType, record.size, record.path, record.createdAt, record.hash],
     );
 
@@ -128,6 +141,7 @@ export class SqliteDocumentRepository implements DocumentRepository {
       createdAt: row.created_at as string,
       indexed: Boolean(row.indexed),
       hash: (row.sha256 as string) ?? "",
+      tags: parseTags(row.tags),
     };
   }
 
@@ -148,6 +162,17 @@ export class SqliteDocumentRepository implements DocumentRepository {
       ext && !name.toLowerCase().endsWith(ext.toLowerCase()) ? `${name}${ext}` : name;
 
     this.db.run("UPDATE files SET original_name = ? WHERE id = ?", [finalName, id]);
+  }
+
+  setTags(id: string, tags: string[]): void {
+    this.db.run("UPDATE files SET tags = ? WHERE id = ?", [JSON.stringify(tags), id]);
+  }
+
+  listTags(userId: number): string[] {
+    const rows = this.db
+      .query("SELECT DISTINCT value AS tag FROM files, json_each(files.tags) WHERE user_id = ? ORDER BY value")
+      .all(userId) as { tag: string }[];
+    return rows.map((r) => r.tag);
   }
 
   delete(id: string, userId: number): boolean {

@@ -28,6 +28,10 @@ export class QdrantVectorIndex implements VectorIndex {
     await this.client
       .createPayloadIndex(COLLECTION, { field_name: "userId", field_schema: "integer" })
       .catch(() => {});
+    // Payload index on tags so tag filters stay efficient.
+    await this.client
+      .createPayloadIndex(COLLECTION, { field_name: "tags", field_schema: "keyword" })
+      .catch(() => {});
     this.ready = true;
   }
 
@@ -42,7 +46,9 @@ export class QdrantVectorIndex implements VectorIndex {
     const points = chunks.map((chunk, i) => ({
       id: crypto.randomUUID(),
       vector: vectors[i],
-      payload: { text: chunk, fileId, fileName, userId } satisfies ChunkMetadata,
+      // Tags start empty; the indexing use case fills them via setTags once the
+      // document text (incl. OCR) is known, mirroring how the title is applied.
+      payload: { text: chunk, fileId, fileName, userId, tags: [] } satisfies ChunkMetadata,
     }));
     await this.client.upsert(COLLECTION, { points });
   }
@@ -51,15 +57,18 @@ export class QdrantVectorIndex implements VectorIndex {
     vector: number[],
     userId: number,
     topK = 5,
+    tags?: string[],
   ): Promise<SearchResult[]> {
     await this.ensureCollection();
+    const must: Record<string, unknown>[] = [{ key: "userId", match: { value: userId } }];
+    if (tags && tags.length > 0) {
+      must.push({ key: "tags", match: { any: tags } });
+    }
     const result = await this.client.search(COLLECTION, {
       vector,
       limit: topK,
       with_payload: true,
-      filter: {
-        must: [{ key: "userId", match: { value: userId } }],
-      },
+      filter: { must },
     });
     return result.map((r) => ({
       ...(r.payload as unknown as ChunkMetadata),
@@ -83,6 +92,19 @@ export class QdrantVectorIndex implements VectorIndex {
     await this.ensureCollection();
     await this.client.setPayload(COLLECTION, {
       payload: { fileName },
+      filter: {
+        must: [
+          { key: "fileId", match: { value: fileId } },
+          { key: "userId", match: { value: userId } },
+        ],
+      },
+    });
+  }
+
+  async setTags(fileId: string, tags: string[], userId: number): Promise<void> {
+    await this.ensureCollection();
+    await this.client.setPayload(COLLECTION, {
+      payload: { tags },
       filter: {
         must: [
           { key: "fileId", match: { value: fileId } },

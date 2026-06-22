@@ -4,12 +4,14 @@ import type {
   Embedder,
   Ocr,
   PasswordVault,
+  Tagger,
   TextExtractor,
   Titler,
   VectorIndex,
 } from "../domain/ports";
 import { embedAndIndex } from "./embedAndIndex";
 import { safeGenerateTitle } from "./safeGenerateTitle";
+import { safeGenerateTags } from "./safeGenerateTags";
 
 export interface IndexPdfInput {
   buffer: Buffer;
@@ -43,6 +45,7 @@ export class IndexPdf {
     private readonly repo: DocumentRepository,
     private readonly ocr: Ocr,
     private readonly titler: Titler | null = null,
+    private readonly tagger: Tagger | null = null,
   ) {}
 
   async run(input: IndexPdfInput): Promise<IndexPdfResult> {
@@ -83,6 +86,7 @@ export class IndexPdf {
 
       this.repo.setIndexed(fileId, true);
       await this.applyName(fileId, sourceText, fileName, userId);
+      await this.applyTags(fileId, sourceText, userId);
       return { indexed: true };
     }
 
@@ -105,6 +109,17 @@ export class IndexPdf {
     this.repo.setOriginalName(fileId, name);
     await this.vectorIndex.renameFile(fileId, name, userId).catch((err) => {
       console.error("Vector index rename failed:", err);
+    });
+  }
+
+  // Generate medical tags from the document's text and mirror them onto SQLite
+  // and every chunk's payload. Best-effort: failures never break indexing.
+  private async applyTags(fileId: string, text: string, userId: number): Promise<void> {
+    const tags = await safeGenerateTags(this.tagger, text);
+    if (tags.length === 0) return;
+    this.repo.setTags(fileId, tags);
+    await this.vectorIndex.setTags(fileId, tags, userId).catch((err) => {
+      console.error("Vector index setTags failed:", err);
     });
   }
 }
