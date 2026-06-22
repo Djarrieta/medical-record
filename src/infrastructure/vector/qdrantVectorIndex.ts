@@ -4,14 +4,15 @@ import type { VectorIndex } from "../../domain/ports";
 import type { ChunkMetadata, SearchResult } from "../../domain/types";
 
 const COLLECTION = "documents";
-const VECTOR_SIZE = 384;
 
 export class QdrantVectorIndex implements VectorIndex {
   private client: QdrantClient;
   private ready = false;
+  private readonly vectorSize: number;
 
-  constructor(url: string) {
+  constructor(url: string, vectorSize: number) {
     this.client = new QdrantClient({ url });
+    this.vectorSize = vectorSize;
   }
 
   async ensureCollection(): Promise<void> {
@@ -20,7 +21,7 @@ export class QdrantVectorIndex implements VectorIndex {
     const exists = collections.collections.some((c) => c.name === COLLECTION);
     if (!exists) {
       await this.client.createCollection(COLLECTION, {
-        vectors: { size: VECTOR_SIZE, distance: "Cosine" },
+        vectors: { size: this.vectorSize, distance: "Cosine" },
       });
     }
     // Payload index on userId so per-user filters stay efficient.

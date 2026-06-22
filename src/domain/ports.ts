@@ -47,6 +47,8 @@ export interface Ocr {
 export interface Embedder {
   embed(texts: string[]): Promise<number[][]>;
   embedQuery(text: string): Promise<number[]>;
+  // Embedding vector size. Valid only after the embedder is initialized.
+  dimensions(): number;
 }
 
 export interface VectorIndex {

@@ -8,6 +8,7 @@ export class TransformersEmbedder implements Embedder {
   private pipe: FeatureExtractionPipeline | null = null;
   private modelName: string;
   private cacheDir: string;
+  private dim = 0;
 
   constructor(modelName: string, cacheDir: string) {
     this.modelName = modelName;
@@ -18,6 +19,14 @@ export class TransformersEmbedder implements Embedder {
     this.pipe = await pipeline("feature-extraction", this.modelName, {
       cache_dir: this.cacheDir,
     }) as unknown as FeatureExtractionPipeline;
+    // Probe the model once so the vector dimension is derived from the model
+    // itself (the single source of truth) instead of a hardcoded constant.
+    this.dim = (await this.embedQuery("dimension probe")).length;
+  }
+
+  dimensions(): number {
+    if (this.dim === 0) throw new Error("EmbeddingProvider not initialized");
+    return this.dim;
   }
 
   async embed(texts: string[]): Promise<number[][]> {

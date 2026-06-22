@@ -44,8 +44,13 @@ const sessions = new InMemorySessionStore(cfg.sessionTtlMs, cfg.sessionWarningGr
 const modelsDir = join(cfg.dataDir, "models");
 if (!existsSync(modelsDir)) mkdirSync(modelsDir, { recursive: true });
 const embedder = new TransformersEmbedder(cfg.embeddingModel, modelsDir);
+console.log("Initializing embedding model...");
+await embedder.initialize();
+console.log("Embedding model ready.");
 
-const vectorIndex = new QdrantVectorIndex(cfg.qdrantUrl);
+// The collection's vector size is derived from the model, so model and index
+// can never drift (a mismatch would make every upsert fail with HTTP 400).
+const vectorIndex = new QdrantVectorIndex(cfg.qdrantUrl, embedder.dimensions());
 
 // Title generation is optional — only available when an LLM is configured.
 const titler = cfg.deepseekApiKey ? new LlmTitler(cfg) : null;
@@ -108,10 +113,6 @@ process.on("SIGTERM", async () => {
   await bot.stop();
   process.exit(0);
 });
-
-console.log("Initializing embedding model...");
-await embedder.initialize();
-console.log("Embedding model ready.");
 
 console.log("Ensuring Qdrant collection...");
 await vectorIndex.ensureCollection();
