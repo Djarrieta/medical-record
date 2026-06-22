@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+echo "Pulling latest changes..."
+sudo git pull
+
 echo "Stopping containers..."
 sudo docker compose down
 
