@@ -7,7 +7,6 @@ import type {
   DocumentRepository,
   NoteRepository,
   PasswordVault,
-  SenderAllowlist,
   SessionStore,
 } from "../../domain/ports";
 import type { IndexPdf } from "../../application/indexPdf";
@@ -31,15 +30,12 @@ export class BotApp {
   private indexNote: IndexNote;
   private deleteNote: DeleteNote;
   private notes: NoteRepository;
-  private senders: SenderAllowlist;
   private askQuestion: AskQuestion | null;
   private vault: PasswordVault;
   private sessions: SessionStore;
   private pendingPasswords: Map<number, PendingPassword>;
   private pendingPasswordAdd: Set<number>;
   private pendingNote: Set<number>;
-  private pendingSenderAdd: Set<number>;
-  private pendingSenderRemove: Set<number>;
   private webUrl: string;
 
   constructor(
@@ -50,7 +46,6 @@ export class BotApp {
     indexNote: IndexNote,
     deleteNote: DeleteNote,
     notes: NoteRepository,
-    senders: SenderAllowlist,
     askQuestion: AskQuestion | null,
     vault: PasswordVault,
     sessions: SessionStore,
@@ -62,15 +57,12 @@ export class BotApp {
     this.indexNote = indexNote;
     this.deleteNote = deleteNote;
     this.notes = notes;
-    this.senders = senders;
     this.askQuestion = askQuestion;
     this.vault = vault;
     this.sessions = sessions;
     this.pendingPasswords = new Map();
     this.pendingPasswordAdd = new Set();
     this.pendingNote = new Set();
-    this.pendingSenderAdd = new Set();
-    this.pendingSenderRemove = new Set();
     this.webUrl = config.webUrl;
     this.bot = new Bot(config.botToken);
     this.registerMiddlewares();
@@ -101,8 +93,6 @@ export class BotApp {
   private clearPending(userId: number): void {
     this.pendingPasswordAdd.delete(userId);
     this.pendingNote.delete(userId);
-    this.pendingSenderAdd.delete(userId);
-    this.pendingSenderRemove.delete(userId);
     this.pendingPasswords.delete(userId);
   }
 
@@ -114,7 +104,6 @@ export class BotApp {
         .text("Contraseña")
         .row()
         .text("Notas")
-        .text("Correos")
         .text("Reiniciar")
         .resized();
       return ctx.reply(
@@ -162,30 +151,6 @@ export class BotApp {
       if (data === "note:list") {
         await ctx.answerCallbackQuery();
         await this.replyNotesList(ctx);
-        return;
-      }
-
-      if (data === "sender:add") {
-        this.pendingSenderRemove.delete(userId);
-        this.pendingSenderAdd.add(userId);
-        await ctx.answerCallbackQuery();
-        await ctx.reply(
-          "✉️ Escribe la dirección o dominio a permitir (ej. `@sura.com` o `alguien@correo.com`):",
-        );
-        return;
-      }
-
-      if (data === "sender:remove") {
-        this.pendingSenderAdd.delete(userId);
-        this.pendingSenderRemove.add(userId);
-        await ctx.answerCallbackQuery();
-        await ctx.reply("🗑️ Escribe la dirección o dominio a quitar:");
-        return;
-      }
-
-      if (data === "sender:list") {
-        await ctx.answerCallbackQuery();
-        await this.replySenderList(ctx);
         return;
       }
 
@@ -314,7 +279,7 @@ export class BotApp {
       // pending input intent (e.g. a forgotten "Nota" prompt) is cancelled.
       // This prevents a stale state from silently saving the next message as a
       // note, password, etc.
-      const MENU_LABELS = ["Archivos", "Contraseña", "Notas", "Correos", "Reiniciar"];
+      const MENU_LABELS = ["Archivos", "Contraseña", "Notas", "Reiniciar"];
       if (MENU_LABELS.includes(text)) {
         this.clearPending(ctx.from!.id);
       }
@@ -347,17 +312,6 @@ export class BotApp {
         return;
       }
 
-      if (text === "Correos") {
-        const keyboard = new InlineKeyboard()
-          .text("Agregar", "sender:add")
-          .text("Quitar", "sender:remove")
-          .text("Listar", "sender:list");
-        await ctx.reply("✉️ Remitentes permitidos para ingesta de correo:", {
-          reply_markup: keyboard,
-        });
-        return;
-      }
-
       if (this.pendingPasswordAdd.has(ctx.from!.id)) {
         this.pendingPasswordAdd.delete(ctx.from!.id);
         this.vault.add(text);
@@ -374,20 +328,6 @@ export class BotApp {
           await ctx.reply("❌ Error al guardar la nota.");
           console.error("IndexNote error:", error);
         }
-        return;
-      }
-
-      if (this.pendingSenderAdd.has(ctx.from!.id)) {
-        this.pendingSenderAdd.delete(ctx.from!.id);
-        this.senders.add(text);
-        await ctx.reply(`✅ Remitente agregado: ${text.trim().toLowerCase()}`);
-        return;
-      }
-
-      if (this.pendingSenderRemove.has(ctx.from!.id)) {
-        this.pendingSenderRemove.delete(ctx.from!.id);
-        this.senders.remove(text);
-        await ctx.reply(`🗑️ Remitente quitado: ${text.trim().toLowerCase()}`);
         return;
       }
 
@@ -477,17 +417,6 @@ export class BotApp {
       parse_mode: "HTML",
       reply_markup: keyboard,
     });
-  }
-
-  // Show the current sender allowlist as plain text.
-  private async replySenderList(ctx: Context): Promise<void> {
-    const entries = this.senders.list();
-    if (entries.length === 0) {
-      await ctx.reply("✉️ No hay remitentes permitidos.");
-      return;
-    }
-    const lines = entries.map((e, i) => `${i + 1}. ${e}`).join("\n");
-    await ctx.reply(`✉️ Remitentes permitidos:\n\n${lines}`);
   }
 
   async start(): Promise<void> {

@@ -6,8 +6,6 @@ import { openAppDatabase, migrateLegacyDatabases } from "./infrastructure/persis
 import { SqliteDocumentRepository } from "./infrastructure/persistence/sqliteDocumentRepository";
 import { SqlitePasswordVault } from "./infrastructure/persistence/sqlitePasswordVault";
 import { SqliteNoteRepository } from "./infrastructure/persistence/sqliteNoteRepository";
-import { SqliteSenderAllowlist } from "./infrastructure/persistence/sqliteSenderAllowlist";
-import { SqliteProcessedMessages } from "./infrastructure/persistence/sqliteProcessedMessages";
 import { UnpdfTextExtractor } from "./infrastructure/pdf/unpdfTextExtractor";
 import { TesseractOcr } from "./infrastructure/ocr/tesseractOcr";
 import { TransformersEmbedder } from "./infrastructure/embedding/transformersEmbedder";
@@ -16,7 +14,6 @@ import { RecursiveChunker } from "./infrastructure/text/recursiveChunker";
 import { DeepseekLlm } from "./infrastructure/llm/deepseekLlm";
 import { LlmTitler } from "./infrastructure/llm/llmTitler";
 import { InMemorySessionStore } from "./infrastructure/session/sessionStore";
-import { OutlookGraphMailSource } from "./infrastructure/mail/outlookGraphMailSource";
 import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
 
@@ -26,7 +23,6 @@ import { IndexNote } from "./application/indexNote";
 import { DeleteNote } from "./application/deleteNote";
 import { AskQuestion } from "./application/askQuestion";
 import { DeleteDocument } from "./application/deleteDocument";
-import { IngestMail } from "./application/ingestMail";
 
 // Composition root: the only place that knows concrete adapters.
 // It wires infrastructure into the application use cases and starts the drivers.
@@ -40,8 +36,6 @@ const db = openAppDatabase(cfg.dataDir);
 const repo = new SqliteDocumentRepository(db, cfg.dataDir);
 const vault = new SqlitePasswordVault(db);
 const notes = new SqliteNoteRepository(db);
-const senders = new SqliteSenderAllowlist(db);
-const processedMessages = new SqliteProcessedMessages(db);
 // One-time import of legacy metadata.db / passwords.db into app.db (no-op once
 // migrated). Runs after the tables above are created.
 migrateLegacyDatabases(db, cfg.dataDir);
@@ -81,7 +75,6 @@ const bot = new BotApp(
   indexNote,
   deleteNote,
   notes,
-  senders,
   askQuestion,
   vault,
   sessions,
@@ -107,59 +100,14 @@ const sweep = setInterval(() => {
   }
 }, cfg.sessionSweepMs);
 
-// Mail ingestion poll (optional): only runs when a Graph client id is set, the
-// same way RAG only runs with a DeepSeek key. Pulls attachments/bodies from
-// allowed senders and indexes them. Auth via `bun run auth:mail` (one-time).
-let mailPoll: ReturnType<typeof setInterval> | null = null;
-if (cfg.graphClientId) {
-  const mailSource = new OutlookGraphMailSource({
-    clientId: cfg.graphClientId,
-    authority: cfg.graphAuthority,
-    tokenPath: cfg.graphTokenPath,
-    allowlist: senders,
-  });
-  const ingestMail = new IngestMail(
-    mailSource,
-    processedMessages,
-    indexPdf,
-    indexImage,
-    indexNote,
-    repo,
-    cfg.mailUserId,
-  );
-  let ingesting = false;
-  const runIngest = async () => {
-    if (ingesting) return;
-    ingesting = true;
-    try {
-      const res = await ingestMail.run();
-      if (res.messagesProcessed > 0) {
-        console.log(
-          `Mail ingest: ${res.messagesProcessed} msg(s), ` +
-            `${res.documentsIndexed} doc(s), ${res.notesCreated} note(s)`,
-        );
-      }
-    } catch (err) {
-      console.error("Mail ingest failed:", err);
-    } finally {
-      ingesting = false;
-    }
-  };
-  mailPoll = setInterval(() => void runIngest(), cfg.mailPollMs);
-  void runIngest();
-  console.log(`Mail ingestion enabled (poll every ${cfg.mailPollMs / 1000}s).`);
-}
-
 process.on("SIGINT", async () => {
   clearInterval(sweep);
-  if (mailPoll) clearInterval(mailPoll);
   await bot.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
   clearInterval(sweep);
-  if (mailPoll) clearInterval(mailPoll);
   await bot.stop();
   process.exit(0);
 });

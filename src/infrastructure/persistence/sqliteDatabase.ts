@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, renameSync } from "fs";
 import { join } from "path";
 
 // Single SQLite database for all relational data (files, passwords, and any
-// future tables like notes/senders). Qdrant stays dedicated to vectors.
+// future tables like notes). Qdrant stays dedicated to vectors.
 // Centralizing in one `app.db` keeps backups and maintenance simple while
 // every adapter still owns its own table(s) via CREATE TABLE IF NOT EXISTS.
 export function openAppDatabase(dataDir: string): Database {

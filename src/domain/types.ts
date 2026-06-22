@@ -29,23 +29,6 @@ export interface Note {
   createdAt: string;
 }
 
-// A single email message pulled from a MailSource, normalized away from the
-// provider's wire format (Microsoft Graph, etc.).
-export interface MailAttachment {
-  name: string;
-  mimeType: string;
-  buffer: Buffer;
-}
-
-export interface MailMessage {
-  id: string;
-  from: string;
-  subject: string;
-  receivedAt: string;
-  bodyText: string;
-  attachments: MailAttachment[];
-}
-
 export interface ChunkMetadata {
   text: string;
   fileId: string;

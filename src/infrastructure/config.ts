@@ -13,13 +13,6 @@ export interface BotConfig {
   sessionTtlMs: number;
   sessionWarningGraceMs: number;
   sessionSweepMs: number;
-  // Mail ingestion (Microsoft Graph, personal account). Optional: when
-  // graphClientId is unset, the feature is disabled.
-  graphClientId?: string;
-  graphAuthority: string;
-  graphTokenPath: string;
-  mailPollMs: number;
-  mailUserId: number;
 }
 
 export class Config {
@@ -45,11 +38,6 @@ export class Config {
     );
     const sessionSweepSeconds = parseInt(process.env.SESSION_SWEEP_SECONDS ?? "30", 10);
 
-    const mailPollSeconds = parseInt(process.env.MAIL_POLL_SECONDS ?? "600", 10);
-    const mailUserId = process.env.MAIL_USER_ID
-      ? Number(process.env.MAIL_USER_ID)
-      : allowedUserIds[0];
-
     this.botConfig = {
       botToken,
       allowedUserIds,
@@ -65,13 +53,6 @@ export class Config {
       sessionTtlMs: sessionTtlSeconds * 1000,
       sessionWarningGraceMs: sessionWarningGraceSeconds * 1000,
       sessionSweepMs: sessionSweepSeconds * 1000,
-      graphClientId: process.env.GRAPH_CLIENT_ID,
-      graphAuthority: process.env.GRAPH_AUTHORITY ?? "consumers",
-      graphTokenPath:
-        process.env.GRAPH_TOKEN_PATH ??
-        `${process.env.DATA_DIR ?? "./data"}/graph-token.json`,
-      mailPollMs: mailPollSeconds * 1000,
-      mailUserId,
     };
   }
 }
