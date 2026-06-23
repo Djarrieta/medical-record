@@ -65,6 +65,11 @@ export interface Embedder {
 export interface VectorIndex {
   index(chunks: string[], vectors: number[][], fileId: string, fileName: string, userId: number): Promise<void>;
   search(vector: number[], userId: number, topK?: number, tags?: string[]): Promise<SearchResult[]>;
+  // Lexical (full-text) fallback search: matches chunks whose text contains the
+  // given terms, ignoring semantic similarity. Used when the dense vector search
+  // misses literal keyword matches (e.g. a single word like "hijos"). Returns
+  // chunks with score 0 (no relevance ranking).
+  searchKeyword(query: string, userId: number, topK?: number, tags?: string[]): Promise<SearchResult[]>;
   deleteByFileId(fileId: string, userId: number): Promise<void>;
   // Update the fileName payload of every chunk of a file, so the vector index
   // stays in sync when the document is renamed (e.g. to an LLM-generated title).

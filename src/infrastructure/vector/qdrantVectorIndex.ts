@@ -32,6 +32,14 @@ export class QdrantVectorIndex implements VectorIndex {
     await this.client
       .createPayloadIndex(COLLECTION, { field_name: "tags", field_schema: "keyword" })
       .catch(() => {});
+    // Full-text payload index on the chunk text, enabling the lexical fallback
+    // search (searchKeyword) to match literal keywords the dense search misses.
+    await this.client
+      .createPayloadIndex(COLLECTION, {
+        field_name: "text",
+        field_schema: { type: "text", tokenizer: "word", lowercase: true },
+      })
+      .catch(() => {});
     this.ready = true;
   }
 
@@ -73,6 +81,35 @@ export class QdrantVectorIndex implements VectorIndex {
     return result.map((r) => ({
       ...(r.payload as unknown as ChunkMetadata),
       score: r.score ?? 0,
+    }));
+  }
+
+  async searchKeyword(
+    query: string,
+    userId: number,
+    topK = 5,
+    tags?: string[],
+  ): Promise<SearchResult[]> {
+    await this.ensureCollection();
+    const text = query.trim();
+    if (!text) return [];
+    const must: Record<string, unknown>[] = [
+      { key: "userId", match: { value: userId } },
+      // Full-text match: returns chunks whose text contains the query terms.
+      { key: "text", match: { text } },
+    ];
+    if (tags && tags.length > 0) {
+      must.push({ key: "tags", match: { any: tags } });
+    }
+    const result = await this.client.scroll(COLLECTION, {
+      limit: topK,
+      with_payload: true,
+      with_vector: false,
+      filter: { must },
+    });
+    return result.points.map((p) => ({
+      ...(p.payload as unknown as ChunkMetadata),
+      score: 0,
     }));
   }
 

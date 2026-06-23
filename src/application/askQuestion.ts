@@ -5,6 +5,7 @@ const SYSTEM_PROMPT = `Eres un asistente médico que responde preguntas sobre lo
 Tienes la herramienta "search_medical_records" para buscar fragmentos en los documentos indexados. Úsala SIEMPRE (una o varias veces, reformulando la búsqueda si hace falta) antes de responder.
 Cada documento y nota tiene "tags": términos médicos (órganos o zonas del cuerpo, procedimientos o tipos de examen, especialidad) y, cuando existe, la fecha del documento en formato AAAA-MM-DD. Puedes filtrar la búsqueda pasando "tags" para acotar a documentos con esos términos (ej. tags ["orina"] para exámenes de orina). Usa la herramienta "list_available_tags" para ver qué tags existen antes de filtrar; si no estás seguro, busca sin filtro.
 IMPORTANTE: si filtras por "tags" y la búsqueda no devuelve coincidencias (o no son relevantes), VUELVE A BUSCAR sin el filtro de "tags" antes de concluir que no hay información. Las notas y documentos pueden no tener el tag que esperas; una búsqueda sin filtro abarca todo.
+Si después de buscar sin filtro "search_medical_records" sigue sin devolver resultados relevantes, usa "keyword_search" como último recurso: hace una búsqueda literal por palabras exactas (ej. "hijos") y encuentra fragmentos que la búsqueda semántica pasó por alto. Solo concluye que no hay información cuando también "keyword_search" falle.
 Responde de forma directa y concisa: contesta únicamente lo que se te pregunta, sin agregar contexto, explicaciones ni datos que no te pidieron.
 Si no encuentras la respuesta, dilo en una frase. No ofrezcas seguir buscando ni hagas preguntas de seguimiento.
 Si el paciente pide que le envíes, reenvíes, mandes o muestres un documento original (por ejemplo "mándame el documento"), usa la herramienta "send_original_document" con el nombre exacto del archivo. Esto es útil cuando el dato puede estar manuscrito o no ser legible en el texto indexado.
@@ -101,6 +102,53 @@ export class AskQuestion {
       },
     };
 
+    const keywordTool: Tool = {
+      name: "keyword_search",
+      description:
+        "Búsqueda literal (no semántica) por palabras exactas en el texto de los documentos y notas. " +
+        "Úsala como ÚLTIMO RECURSO cuando search_medical_records no devuelva resultados o no sean relevantes: " +
+        "encuentra fragmentos que contienen exactamente las palabras que pasas (ej. \"hijos\", \"alergia penicilina\"). " +
+        "Pasa solo las palabras clave relevantes, no la pregunta completa.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Palabras clave literales a buscar en el texto (sin signos de puntuación).",
+          },
+          topK: {
+            type: "integer",
+            description: "Número máximo de fragmentos a recuperar (por defecto 5).",
+          },
+        },
+        required: ["query"],
+      },
+      execute: async (args) => {
+        const query = String(args.query ?? "").trim();
+        if (!query) return JSON.stringify({ results: [], note: "Consulta vacía." });
+
+        const topK = Number.isFinite(Number(args.topK)) ? Number(args.topK) : 5;
+        const results = await this.vectorIndex.searchKeyword(query, userId, topK);
+
+        for (const r of results) {
+          if (!cited.has(r.fileName)) cited.set(r.fileName, r.score);
+          foundFiles.set(r.fileName, r.fileId);
+        }
+
+        if (results.length === 0) {
+          return JSON.stringify({ results: [], note: "Sin coincidencias literales." });
+        }
+
+        return JSON.stringify({
+          results: results.map((r) => ({
+            fileName: r.fileName,
+            text: r.text,
+            tags: r.tags ?? [],
+          })),
+        });
+      },
+    };
+
     const sendTool: Tool = {
       name: "send_original_document",
       description:
@@ -167,6 +215,7 @@ export class AskQuestion {
     const history = this.sessions.history(userId);
     const answer = await this.llm.answer(SYSTEM_PROMPT, history, question, [
       searchTool,
+      keywordTool,
       sendTool,
       listTagsTool,
     ]);
