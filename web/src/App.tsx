@@ -7,11 +7,15 @@ import {
   setOnExpired,
 } from "./api";
 import { IconClock, IconLogo } from "./icons";
+import { Navbar, type View } from "./components/Navbar";
 import { UploadCard } from "./components/UploadCard";
 import { FilesCard } from "./components/FilesCard";
 import { NotesCard } from "./components/NotesCard";
+import { ChatView } from "./components/ChatView";
+import { PasswordsCard } from "./components/PasswordsCard";
 
 export function App() {
+  const [view, setView] = useState<View>("chat");
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [activeTag, setActiveTag] = useState("");
@@ -43,6 +47,12 @@ export function App() {
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
   }, [reloadFiles, reloadNotes]);
+
+  // Reset any active tag filter when switching sections so each view starts clean.
+  const changeView = useCallback((next: View) => {
+    setView(next);
+    setActiveTag("");
+  }, []);
 
   // Persist a tag change optimistically against the server, then sync the stored
   // (normalized) tags back into local state.
@@ -91,26 +101,39 @@ export function App() {
         </div>
       </header>
 
-      <UploadCard onUploaded={reloadFiles} />
+      <Navbar active={view} onChange={changeView} />
 
-      <FilesCard
-        files={files}
-        activeTag={activeTag}
-        onFilter={setActiveTag}
-        onClearFilter={() => setActiveTag("")}
-        onReload={reloadFiles}
-        onTagsChange={(id, tags) => changeTags("file", id, tags)}
-        showToast={showToast}
-      />
+      <main className="view">
+        {view === "chat" && <ChatView />}
 
-      <NotesCard
-        notes={notes}
-        activeTag={activeTag}
-        onFilter={setActiveTag}
-        onReload={reloadNotes}
-        onTagsChange={(id, tags) => changeTags("note", id, tags)}
-        showToast={showToast}
-      />
+        {view === "files" && (
+          <>
+            <UploadCard onUploaded={reloadFiles} />
+            <FilesCard
+              files={files}
+              activeTag={activeTag}
+              onFilter={setActiveTag}
+              onClearFilter={() => setActiveTag("")}
+              onReload={reloadFiles}
+              onTagsChange={(id, tags) => changeTags("file", id, tags)}
+              showToast={showToast}
+            />
+          </>
+        )}
+
+        {view === "passwords" && <PasswordsCard showToast={showToast} />}
+
+        {view === "notes" && (
+          <NotesCard
+            notes={notes}
+            activeTag={activeTag}
+            onFilter={setActiveTag}
+            onReload={reloadNotes}
+            onTagsChange={(id, tags) => changeTags("note", id, tags)}
+            showToast={showToast}
+          />
+        )}
+      </main>
 
       <div id="toast" className={toast ? "show" : ""} role="status" aria-live="polite">
         {toast}

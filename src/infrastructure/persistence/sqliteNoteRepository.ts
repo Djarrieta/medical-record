@@ -70,6 +70,18 @@ export class SqliteNoteRepository implements NoteRepository {
     return true;
   }
 
+  update(id: string, userId: number, text: string, title: string): boolean {
+    const existing = this.get(id, userId);
+    if (!existing) return false;
+    this.db.run("UPDATE notes SET text = ?, title = ? WHERE id = ? AND user_id = ?", [
+      text,
+      title,
+      id,
+      userId,
+    ]);
+    return true;
+  }
+
   setTags(id: string, tags: string[]): void {
     this.db.run("UPDATE notes SET tags = ? WHERE id = ?", [JSON.stringify(tags), id]);
   }

@@ -19,6 +19,22 @@ export interface Note {
 
 export type TagKind = "file" | "note";
 
+export interface Password {
+  id: number;
+  password: string;
+}
+
+export interface ChatSource {
+  id: string;
+  name: string;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  sources?: ChatSource[];
+}
+
 export interface UploadResult {
   ok: boolean;
   expired?: boolean;

@@ -77,6 +77,11 @@ export interface VectorIndex {
 export interface PasswordVault {
   add(password: string): void;
   getAll(): string[];
+  // Stored passwords with their row id, so callers (e.g. the web UI) can list
+  // and delete individual entries.
+  list(): { id: number; password: string }[];
+  // Removes a single stored password by id. Returns true when a row was deleted.
+  remove(id: number): boolean;
   count(): number;
   clear(): void;
 }
@@ -87,6 +92,9 @@ export interface NoteRepository {
   save(userId: number, text: string, title: string): Note;
   list(userId: number): Note[];
   get(id: string, userId: number): Note | null;
+  // Replaces a note's body and title. Returns false when the note does not
+  // exist for that user.
+  update(id: string, userId: number, text: string, title: string): boolean;
   // Replaces a note's tags (source of truth in SQLite).
   setTags(id: string, tags: string[]): void;
   // Distinct tags across the user's notes (for listing available filters).

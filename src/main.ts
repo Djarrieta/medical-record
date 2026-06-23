@@ -21,6 +21,7 @@ import { startWebServer } from "./infrastructure/web/webServer";
 import { IndexPdf } from "./application/indexPdf";
 import { IndexImage } from "./application/indexImage";
 import { IndexNote } from "./application/indexNote";
+import { UpdateNote } from "./application/updateNote";
 import { DeleteNote } from "./application/deleteNote";
 import { AskQuestion } from "./application/askQuestion";
 import { DeleteDocument } from "./application/deleteDocument";
@@ -62,6 +63,7 @@ const tagger = cfg.deepseekApiKey ? new LlmTagger(cfg) : null;
 const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo, ocr, titler, tagger);
 const indexImage = new IndexImage(ocr, chunker, embedder, vectorIndex, repo, titler, tagger);
 const indexNote = new IndexNote(chunker, embedder, vectorIndex, notes, titler, tagger);
+const updateNote = new UpdateNote(chunker, embedder, vectorIndex, notes);
 const deleteNote = new DeleteNote(notes, vectorIndex);
 const deleteDocument = new DeleteDocument(repo, vectorIndex);
 
@@ -130,8 +132,12 @@ startWebServer({
   notes,
   indexPdf,
   indexImage,
+  indexNote,
+  updateNote,
   deleteDocument,
   deleteNote,
   vectorIndex,
+  vault,
+  askQuestion,
   sessions,
 });

@@ -31,6 +31,17 @@ export class SqlitePasswordVault implements PasswordVault {
       .map((r: any) => r.password);
   }
 
+  list(): { id: number; password: string }[] {
+    return this.db
+      .query("SELECT id, password FROM passwords ORDER BY id")
+      .all() as { id: number; password: string }[];
+  }
+
+  remove(id: number): boolean {
+    const res = this.db.run("DELETE FROM passwords WHERE id = ?", [id]);
+    return res.changes > 0;
+  }
+
   count(): number {
     const row = this.db
       .query("SELECT COUNT(*) AS n FROM passwords")

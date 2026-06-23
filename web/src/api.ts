@@ -1,4 +1,4 @@
-import type { FileRecord, Note, TagKind, UploadResult } from "./types";
+import type { FileRecord, Note, Password, TagKind, UploadResult } from "./types";
 
 // Auth comes from the URL: /u/<userId>?token=<sessionToken>.
 const PATH_MATCH = window.location.pathname.match(/\/u\/(\d+)/);
@@ -81,6 +81,103 @@ export async function deleteNote(id: string): Promise<boolean> {
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+export async function createNote(text: string, title?: string): Promise<Note | null> {
+  try {
+    const res = await fetch("/api/notes?" + authQuery(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, title }),
+    });
+    if (expired(res)) return null;
+    if (!res.ok) return null;
+    const data = (await res.json()) as { ok?: boolean; note?: Note };
+    return data.ok && data.note ? data.note : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateNote(id: string, text: string, title?: string): Promise<Note | null> {
+  try {
+    const res = await fetch("/api/notes/" + encodeURIComponent(id) + "?" + authQuery(), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, title }),
+    });
+    if (expired(res)) return null;
+    if (!res.ok) return null;
+    const data = (await res.json()) as { ok?: boolean; note?: Note };
+    return data.ok && data.note ? data.note : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function listPasswords(): Promise<Password[] | null> {
+  try {
+    const res = await fetch("/api/passwords?" + authQuery());
+    if (expired(res)) return null;
+    if (!res.ok) return null;
+    return (await res.json()) as Password[];
+  } catch {
+    return null;
+  }
+}
+
+export async function addPassword(password: string): Promise<Password[] | null> {
+  try {
+    const res = await fetch("/api/passwords?" + authQuery(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (expired(res)) return null;
+    if (!res.ok) return null;
+    const data = (await res.json()) as { ok?: boolean; passwords?: Password[] };
+    return data.passwords ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deletePassword(id: number): Promise<boolean> {
+  try {
+    const res = await fetch("/api/passwords/" + id + "?" + authQuery(), { method: "DELETE" });
+    if (expired(res)) return false;
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export interface ChatReply {
+  ok: boolean;
+  answer?: string;
+  documents?: { id: string; name: string }[];
+  error?: string;
+}
+
+export async function askChat(question: string): Promise<ChatReply> {
+  try {
+    const res = await fetch("/api/chat?" + authQuery(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    if (res.status === 401) {
+      onExpired();
+      return { ok: false, error: "Sesión expirada" };
+    }
+    const data = (await res.json().catch(() => ({}))) as Partial<ChatReply>;
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error ? String(data.error) : "HTTP " + res.status };
+    }
+    return { ok: true, answer: data.answer, documents: data.documents };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

@@ -1,8 +1,11 @@
 import { join, resolve, sep } from "path";
 
-import type { DocumentRepository, NoteRepository, SessionStore, VectorIndex } from "../../domain/ports";
+import type { DocumentRepository, NoteRepository, PasswordVault, SessionStore, VectorIndex } from "../../domain/ports";
 import type { IndexPdf } from "../../application/indexPdf";
 import type { IndexImage } from "../../application/indexImage";
+import type { IndexNote } from "../../application/indexNote";
+import type { UpdateNote } from "../../application/updateNote";
+import type { AskQuestion } from "../../application/askQuestion";
 import type { DeleteDocument } from "../../application/deleteDocument";
 import type { DeleteNote } from "../../application/deleteNote";
 import { isImageBuffer } from "../util/fileType";
@@ -15,9 +18,13 @@ interface WebServerOptions {
   notes: NoteRepository;
   indexPdf: IndexPdf;
   indexImage: IndexImage;
+  indexNote: IndexNote;
+  updateNote: UpdateNote;
   deleteDocument: DeleteDocument;
   deleteNote: DeleteNote;
   vectorIndex: VectorIndex;
+  vault: PasswordVault;
+  askQuestion: AskQuestion | null;
   sessions: SessionStore;
 }
 
@@ -36,6 +43,24 @@ async function readTagsBody(req: Request): Promise<string[] | null> {
   } catch {
     return null;
   }
+}
+
+// Parses an arbitrary JSON object body. Returns null on malformed input.
+async function readJsonBody(req: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const body = (await req.json()) as unknown;
+    if (!body || typeof body !== "object") return null;
+    return body as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function jsonResponse(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 // Serves the SPA shell (index.html) for the per-user entry route.
@@ -140,6 +165,48 @@ export function startWebServer(options: WebServerOptions): void {
         });
       }
 
+      // Create a free-form note (chunked + embedded for RAG, like Telegram).
+      if (method === "POST" && url.pathname === "/api/notes") {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const body = await readJsonBody(req);
+        const text = body && typeof body.text === "string" ? body.text.trim() : "";
+        if (!text) return jsonResponse({ ok: false, error: "Texto vacío" }, 400);
+        const title = body && typeof body.title === "string" ? body.title.trim() : undefined;
+        try {
+          const result = await options.indexNote.run({ text, userId, title });
+          const note = options.notes.get(result.noteId, userId);
+          return jsonResponse({ ok: true, note }, 201);
+        } catch (err) {
+          console.error("Note create error:", err);
+          return jsonResponse({ ok: false, error: String(err) }, 500);
+        }
+      }
+
+      // Edit a note's body/title (re-indexes its vectors).
+      if (
+        method === "PUT" &&
+        url.pathname.startsWith("/api/notes/") &&
+        !url.pathname.endsWith("/tags")
+      ) {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const id = url.pathname.slice("/api/notes/".length);
+        const body = await readJsonBody(req);
+        const text = body && typeof body.text === "string" ? body.text.trim() : "";
+        if (!text) return jsonResponse({ ok: false, error: "Texto vacío" }, 400);
+        const title = body && typeof body.title === "string" ? body.title.trim() : undefined;
+        try {
+          const result = await options.updateNote.run({ id, userId, text, title });
+          if (!result.ok) return new Response("Not found", { status: 404 });
+          const note = options.notes.get(id, userId);
+          return jsonResponse({ ok: true, note });
+        } catch (err) {
+          console.error("Note update error:", err);
+          return jsonResponse({ ok: false, error: String(err) }, 500);
+        }
+      }
+
       if (
         method === "PATCH" &&
         url.pathname.startsWith("/api/notes/") &&
@@ -177,6 +244,56 @@ export function startWebServer(options: WebServerOptions): void {
         return new Response(JSON.stringify({ ok: true }), {
           headers: { "Content-Type": "application/json" },
         });
+      }
+
+      // --- Chat (agentic RAG) ---
+      if (method === "POST" && url.pathname === "/api/chat") {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        if (!options.askQuestion) {
+          return jsonResponse(
+            { ok: false, error: "El chat no está disponible (falta DEEPSEEK_API_KEY)." },
+            503,
+          );
+        }
+        const body = await readJsonBody(req);
+        const question = body && typeof body.question === "string" ? body.question.trim() : "";
+        if (!question) return jsonResponse({ ok: false, error: "Pregunta vacía" }, 400);
+        try {
+          const result = await options.askQuestion.run(question, userId);
+          const documents = result.documents.map((d) => ({ id: d.id, name: d.originalName }));
+          return jsonResponse({ ok: true, answer: result.answer, documents });
+        } catch (err) {
+          console.error("Chat error:", err);
+          return jsonResponse({ ok: false, error: String(err) }, 500);
+        }
+      }
+
+      // --- Passwords (PDF unlock vault; shared, not per-user) ---
+      if (method === "GET" && url.pathname === "/api/passwords") {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        return jsonResponse(options.vault.list());
+      }
+
+      if (method === "POST" && url.pathname === "/api/passwords") {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const body = await readJsonBody(req);
+        const password = body && typeof body.password === "string" ? body.password : "";
+        if (!password.trim()) return jsonResponse({ ok: false, error: "Contraseña vacía" }, 400);
+        options.vault.add(password);
+        return jsonResponse({ ok: true, passwords: options.vault.list() }, 201);
+      }
+
+      if (method === "DELETE" && url.pathname.startsWith("/api/passwords/")) {
+        const userId = authUser();
+        if (userId === null) return new Response("Unauthorized", { status: 401 });
+        const id = Number(url.pathname.slice("/api/passwords/".length));
+        if (!Number.isFinite(id)) return new Response("Bad request", { status: 400 });
+        const removed = options.vault.remove(id);
+        if (!removed) return new Response("Not found", { status: 404 });
+        return jsonResponse({ ok: true });
       }
 
       if (
