@@ -10,6 +10,12 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/app/data
+      # Bun runs TypeScript directly, so the app needs no build step. Bind-mount
+      # the source + built SPA so code deploys are a `restart` (seconds), not an
+      # image rebuild. node_modules stays baked in the image (not mounted), so a
+      # full `--build` is only needed when dependencies or the Dockerfile change.
+      - ./src:/app/src
+      - ./web/dist:/app/web/dist
     depends_on:
       qdrant:
         condition: service_healthy
