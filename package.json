@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "bun src/main.ts",
-    "typeCheck": "bunx tsc --noEmit"
+    "typeCheck": "bunx tsc --noEmit",
+    "build:web": "cd web && bun install && bun run build"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

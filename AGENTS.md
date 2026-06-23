@@ -15,7 +15,8 @@
 | Stop containers | `./stop.sh` — `sudo docker compose down` |
 | Reset all data | `./reset.sh` — stops containers, deletes DB/files/Qdrant/models, rebuilds |
 
-- **Web UI**: always starts on `http://<host>:<port>` (`WEB_PORT` defaults to `3000`) for drag-and-drop file upload (bypasses Telegram's 50MB limit). Password-protected if `WEB_PASSWORD` is set. See `src/infrastructure/web/webServer.ts`.
+- **Web UI**: always starts on `http://<host>:<port>` (`WEB_PORT` defaults to `3000`) for drag-and-drop file upload (bypasses Telegram's 50MB limit). Password-protected if `WEB_PASSWORD` is set. The UI is a React SPA in `web/` built to `web/dist/` (committed); the Bun server in `src/infrastructure/web/webServer.ts` serves that static bundle + the JSON API.
+- **Building the web UI**: `bun run build:web` (runs `vite build` inside `web/`). The build is **never run on the server** — `web/dist/` is committed, so deploy is just `git pull` + restart. Rebuild + commit `web/dist/` whenever you change anything under `web/src/`.
 - **No test suite.** Validate changes with `bun run typeCheck`.
 - **Never commit or push unless explicitly asked.** When the user requests code changes, make the edits and validate them, but do NOT run `git commit`/`git push` — only do so when the user explicitly says to commit/push/sync.
 - **Reset DB**: when the user says "reestablece la base de datos", "resetea los datos", "limpia los datos" or similar, run `./reset.sh`.
@@ -47,7 +48,8 @@ Lightweight Clean Architecture (ports & adapters). Dependencies point inward: `i
 - **RAG**: `AskQuestion` use case in `src/application/askQuestion.ts` — retrieves top-5 chunks via `Embedder` + `VectorIndex`, answers via the `Llm` port. Prompt forces plain-text Spanish replies (no markdown).
 - **PDF passwords**: `SqlitePasswordVault` (implements `PasswordVault`) in `src/infrastructure/persistence/sqlitePasswordVault.ts` — remembers PDF passwords in the shared `data/app.db` (`passwords` table); tried automatically by `IndexPdf` on locked PDFs before prompting the user. Takes the shared `Database` in its constructor.
 - **Notes**: free-form text notes live in their own `notes` table (`SqliteNoteRepository`, shared `app.db`), separate from documents. `IndexNote` (`src/application/indexNote.ts`) saves the note then chunks→embeds→indexes it in Qdrant under the note id (so RAG retrieves it); `DeleteNote` removes note + vectors. Created via the bot's **Nota** button.
-- **Web upload**: `src/infrastructure/web/webServer.ts` — Bun HTTP server serving an HTML drag-and-drop upload page; reuses the `IndexPdf`/`DeleteDocument` use cases.
+- **Web server**: `src/infrastructure/web/webServer.ts` — Bun HTTP server that serves the built React SPA from `web/dist/` (static assets + `index.html` for the `/u/<userId>` entry route) and the JSON API (`/api/files`, `/api/notes`, `/upload`, tag PATCH, raw download); reuses the `IndexPdf`/`IndexImage`/`DeleteDocument`/`DeleteNote` use cases. Auth is per-request via `userId` + session `token` query params.
+- **Web frontend**: `web/` — Vite + React + TypeScript SPA (drag-and-drop upload, saved-files admin, notes, tag editing/filtering). Build with `bun run build:web`; output `web/dist/` is committed and served by the Bun server (no server-side build, keeping the 4GB/Core-i3 box light). `web/` has its own `package.json`/`tsconfig.json`, isolated from the backend.
 
 ## Docker
 
