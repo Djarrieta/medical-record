@@ -77,7 +77,12 @@ export class BotApp {
     this.bot.use(async (ctx, next) => {
       const userId = ctx.from?.id;
       if (userId === undefined || !this.config.allowedUserIds.includes(userId)) {
-        await ctx.reply("⛔ No autorizado");
+        await ctx.reply(
+          "⛔ No tienes acceso a este bot.\n\n" +
+            "Para usarlo necesitas un user ID autorizado. " +
+            (userId !== undefined ? `Tu user ID es: ${userId}\n\n` : "\n") +
+            "Ponte en contacto con el administrador y reenvíale este mensaje para solicitar acceso.",
+        );
         return;
       }
       // Any authorized interaction marks activity and auto-creates the session,
