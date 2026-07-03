@@ -45,10 +45,9 @@ export class Config {
     const botToken = process.env.BOT_TOKEN;
     if (!botToken) throw new Error("BOT_TOKEN is required");
 
-    const usersFile = process.env.USERS_FILE ?? "./users.json";
-    const users = loadUsers(usersFile);
+    const users = loadUsers();
     if (users.length === 0)
-      throw new Error(`No users found in ${usersFile} (at least one is required)`);
+      throw new Error("No users configured (set USERS or USERS_FILE; at least one is required)");
     const allowedUserIds = users.map((u) => u.id);
 
     const webPort = parseInt(process.env.WEB_PORT ?? "3000", 10);
@@ -93,36 +92,47 @@ export class Config {
   }
 }
 
-// Loads and validates the user registry from a JSON file. Throws on a missing
-// or malformed file (mirrors the old "ALLOWED_USER_ID is required" hard fail).
-function loadUsers(path: string): UserRecord[] {
+// Loads and validates the user registry. Prefers an inline `USERS` env var
+// (a JSON array — handy so the server only maintains a single .env file); falls
+// back to the `USERS_FILE` JSON file (default ./users.json). Throws on a missing
+// or malformed source (mirrors the old "ALLOWED_USER_ID is required" hard fail).
+function loadUsers(): UserRecord[] {
+  const inline = process.env.USERS?.trim();
+  if (inline) return parseUsers(inline, "USERS env var");
+
+  const path = process.env.USERS_FILE ?? "./users.json";
   let raw: string;
   try {
     raw = readFileSync(path, "utf-8");
   } catch {
-    throw new Error(`Users file not found: ${path} (copy users.json.example)`);
+    throw new Error(`Users source not found: set USERS in .env, or create ${path} (copy users.json.example)`);
   }
+  return parseUsers(raw, `Users file ${path}`);
+}
 
+// Parses + validates a JSON array of users from a raw string. `source` labels
+// error messages (either the env var or the file path).
+function parseUsers(raw: string, source: string): UserRecord[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error(`Users file ${path} is not valid JSON`);
+    throw new Error(`${source} is not valid JSON`);
   }
 
   if (!Array.isArray(parsed))
-    throw new Error(`Users file ${path} must be a JSON array`);
+    throw new Error(`${source} must be a JSON array`);
 
   return parsed.map((entry, i) => {
     if (typeof entry !== "object" || entry === null)
-      throw new Error(`Users file ${path}: entry ${i} is not an object`);
+      throw new Error(`${source}: entry ${i} is not an object`);
     const { id, name, email } = entry as Record<string, unknown>;
     if (typeof id !== "number" || !Number.isFinite(id))
-      throw new Error(`Users file ${path}: entry ${i} has an invalid "id"`);
+      throw new Error(`${source}: entry ${i} has an invalid "id"`);
     if (typeof name !== "string" || name.trim() === "")
-      throw new Error(`Users file ${path}: entry ${i} has an invalid "name"`);
+      throw new Error(`${source}: entry ${i} has an invalid "name"`);
     if (email !== undefined && typeof email !== "string")
-      throw new Error(`Users file ${path}: entry ${i} has an invalid "email"`);
+      throw new Error(`${source}: entry ${i} has an invalid "email"`);
     return {
       id,
       name,
