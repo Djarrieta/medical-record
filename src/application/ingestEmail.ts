@@ -1,4 +1,5 @@
 import type { DocumentRepository, EmailSource, ProcessedEmailLog } from "../domain/ports";
+import { isImageBuffer, isPdfBuffer } from "../domain/fileType";
 import type { IndexImage } from "./indexImage";
 import type { IndexNote } from "./indexNote";
 import type { IndexPdf } from "./indexPdf";
@@ -55,7 +56,13 @@ export class IngestEmail {
             existing ??
             (await this.repo.save(userId, att.filename, att.mimeType, att.content));
 
-          if (att.mimeType === "application/pdf") {
+          // Route by MIME, falling back to magic bytes when the client sent a
+          // generic type (email attachments are often application/octet-stream),
+          // mirroring the Telegram/web upload paths.
+          const isPdf = att.mimeType === "application/pdf" || isPdfBuffer(att.content);
+          const isImage = att.mimeType.startsWith("image/") || isImageBuffer(att.content);
+
+          if (isPdf) {
             await this.indexPdf.run({
               buffer: att.content,
               fileId: rec.id,
@@ -63,7 +70,7 @@ export class IngestEmail {
               userId,
             });
             result.pdfs += 1;
-          } else if (att.mimeType.startsWith("image/")) {
+          } else if (isImage) {
             await this.indexImage.run({
               buffer: att.content,
               fileId: rec.id,

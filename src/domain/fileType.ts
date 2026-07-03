@@ -1,5 +1,6 @@
 // Magic-byte file-type detection. Used when the MIME type is missing or
 // ambiguous (e.g. "application/octet-stream") to decide how to handle a buffer.
+// Pure, zero-dependency — lives in the domain so any layer can route on it.
 
 export function isPdfBuffer(buffer: Buffer): boolean {
   // "%PDF-"

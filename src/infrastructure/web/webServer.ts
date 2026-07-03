@@ -8,7 +8,7 @@ import type { UpdateNote } from "../../application/updateNote";
 import type { AskQuestion } from "../../application/askQuestion";
 import type { DeleteDocument } from "../../application/deleteDocument";
 import type { DeleteNote } from "../../application/deleteNote";
-import { isImageBuffer } from "../util/fileType";
+import { isImageBuffer } from "../../domain/fileType";
 import { normalizeTags } from "../../domain/tags";
 
 interface WebServerOptions {
