@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-SNAPSHOT_DIR="$(dirname "$(realpath "$0")")/.."
+SNAPSHOT_DIR="$(dirname "$(realpath "$0")")/../medical-record-snapshots"
 
 if [ $# -eq 0 ]; then
   echo "Available snapshots:"
@@ -32,7 +32,7 @@ else
   SNAPSHOT_FILE="$SNAPSHOT_DIR/$MATCHES"
 fi
 
-echo "Thawing $(basename "$SNAPSHOT_FILE") ..."
+echo "Restoring $(basename "$SNAPSHOT_FILE") ..."
 echo "  Stopping containers..."
 sudo docker compose down
 
