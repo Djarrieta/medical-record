@@ -105,7 +105,7 @@ function loadUsers(): UserRecord[] {
   try {
     raw = readFileSync(path, "utf-8");
   } catch {
-    throw new Error(`Users source not found: set USERS in .env, or create ${path} (copy users.json.example)`);
+    throw new Error(`Users source not found: set USERS in .env (a JSON array), or create ${path}`);
   }
   return parseUsers(raw, `Users file ${path}`);
 }

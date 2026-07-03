@@ -27,7 +27,7 @@
 
 - **`.env` contains bot token and API keys** — in `.gitignore`, never commit.
 - `.env.example` shows the schema: `BOT_TOKEN`, `USERS` (or `USERS_FILE`), `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL`, `DATA_DIR`, `QDRANT_URL`, `EMBEDDING_MODEL`, and the optional email vars (`EMAIL_ENABLED`, `EMAIL_POLL_SECONDS`, `EMAIL_QUERY_DAYS`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_USER`).
-- **User registry**: authorized users are provided EITHER inline via the `USERS` env var (a JSON array on one line — keeps the server to a single `.env`) OR via a `USERS_FILE` JSON file (default `./users.json`, gitignored; `users.json.example` ships the schema `[{ id, name, email? }]`). `USERS` takes precedence when both are set. `Config` loads it at boot (`loadUsers`) and exposes `config.users` + `config.allowedUserIds`. This **replaces** the old `ALLOWED_USER_ID` env var. A user's `email` is the attribution key for forwarded mail.
+- **User registry**: authorized users are provided EITHER inline via the `USERS` env var (a JSON array on one line — keeps the server to a single `.env`) OR via a `USERS_FILE` JSON file (default `./users.json`, gitignored). Schema: `[{ id, name, email? }]` (see the `USERS` line in `.env.example`). `USERS` takes precedence when both are set. `Config` loads it at boot (`loadUsers`) and exposes `config.users` + `config.allowedUserIds`. This **replaces** the old `ALLOWED_USER_ID` env var. A user's `email` is the attribution key for forwarded mail.
 - `DEEPSEEK_API_KEY` is optional — without it text questions return an error but file upload/indexing still work.
 - `WEB_PORT`, `WEB_HOST`, `WEB_PASSWORD` configure the web UI for file upload (always started; `WEB_PORT` defaults to `3000`).
 
