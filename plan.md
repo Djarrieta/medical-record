@@ -1,181 +1,336 @@
-# Plan: tags automáticos + edición manual, con filtrado por el agente
+# Plan: Email ingestion (Gmail → store + index)
 
-## Objetivo
+Status: **Planning only — nothing implemented yet.**
 
-Cada documento indexado (PDF, imagen y nota) lleva un conjunto de **tags**:
-términos médicos relevantes extraídos automáticamente del contenido (órganos /
-zonas del cuerpo, procedimientos / tipos de examen, especialidad, y la **fecha**
-del documento). Los tags sirven para:
+## Goal
 
-1. **Mejores búsquedas del agente**: además de ver los tags de cada fragmento,
-   el agente puede **filtrar** la búsqueda por uno o varios tags.
-2. **Edición manual desde la UI web**: el usuario puede agregar, editar o quitar
-   tags de un archivo.
+Periodically read the user's Gmail inbox. Each incoming email is evaluated
+against an allowlist of sender addresses (managed like PDF passwords). For every
+email whose sender is on the allowlist:
 
-## Decisiones tomadas
+- **Store the email body text** so it is searchable via RAG (like a `Note`).
+- **Store every PDF attachment** to disk and **index it into Qdrant** through the
+  existing `IndexPdf` pipeline (extract → split → embed → index, with OCR + tag/title).
 
-- **Tags libres, guiados por prompt.** No hay catálogo cerrado. Un prompt con
-  ejemplos claros guía al LLM hacia términos canónicos: órganos / zonas completas
-  (`estómago`, `codo`, `espalda`, `ojos`), procedimientos / exámenes de forma
-  global (`hemograma`, `urianálisis`, `radiografía`), y la especialidad cuando
-  sea evidente. Tags en minúscula, singular, sin frases largas.
-- **Fecha = un tag de texto más**, siempre en formato `YYYY-MM-DD` para que sea
-  ordenable alfabéticamente == cronológicamente. Un **util compartido** garantiza
-  el mismo formato tanto al generar (indexado) como al filtrar (búsqueda).
-- **Alcance: archivos y notas.** Ambos se auto-taggean y son filtrables por tag.
-  Ambos se pueden listar y editar (tags / borrar) desde la UI web.
-- **Agente: ver + filtrar.** La herramienta de búsqueda acepta un filtro opcional
-  por tags y devuelve los tags de cada resultado. Se añade una herramienta para
-  listar los tags disponibles del usuario.
-- **Tags a nivel de archivo, espejados a los chunks.** La fuente de verdad vive
-  en SQLite (`files.tags`, `notes.tags`); el payload de **todos** los chunks de
-  ese documento en Qdrant se mantiene en sincronía (igual que hoy con
-  `renameFile`). Editar tags = `UPDATE` en SQLite + `setPayload` en Qdrant. **No**
-  se re-embebe.
-- **Generación = post-indexado, espejo del título.** Los tags se generan tras
-  indexar el texto, desde el mismo `sourceText` que ya usa el título (así un PDF
-  escaneado los obtiene del texto de OCR), y se aplican con `repo.setTags` /
-  `notes.setTags` + `vectorIndex.setTags`. **No** cambian las firmas de
-  `embedAndIndex` ni `vectorIndex.index`.
-- **Generación con un `Tagger` separado**, espejo de `LlmTitler` (no se combina
-  con la generación del título en una sola llamada).
-- **Datos desechables, sin migración.** Se agregan columnas/campos nuevos; como
-  no se conserva data, se aplica con `./reset.sh` (recrea tabla y colección).
+This keeps the dependency rule intact: a new `EmailSource` **driver** port feeds a
+new `IngestEmail` **use case** that reuses existing use cases (`IndexPdf`) and a new
+`IndexEmail` path. Concrete adapters are wired only in `src/main.ts`.
 
-## Modelo de datos
+---
 
-### Tags
-- `string[]`, minúsculas, deduplicados. La fecha, si existe, va como un tag más
-  con formato `YYYY-MM-DD` (ej. `["urianálisis", "orina", "riñón", "2024-03-12"]`).
+## Design overview (hexagonal fit)
 
-### SQLite
-- `files`: nueva columna `tags TEXT NOT NULL DEFAULT '[]'` (JSON array).
-- `notes`: nueva columna `tags TEXT NOT NULL DEFAULT '[]'` (JSON array).
+```
+Gmail  ──>  EmailSource (driver adapter, infra)
+                  │  emits IncomingEmail[]
+                  ▼
+            IngestEmail (use case, application)
+                  │
+       ┌──────────┴───────────┐
+       ▼                      ▼
+  IndexEmail (text)      IndexPdf (per PDF attachment)
+   - EmailRepository      - DocumentRepository.save()
+   - embedAndIndex()      - existing pipeline + OCR + tags
+```
 
-### Qdrant (payload por chunk)
-- Nuevo campo `tags: string[]` en `ChunkMetadata`.
-- Nuevo **payload index** sobre `tags` (`keyword`) para filtrar eficientemente.
+Allowlist of senders mirrors `PasswordVault` exactly: a tiny port + a SQLite
+adapter owning one table in the shared `data/app.db`, plus a web UI card.
 
-## Cambios
+---
 
-### 1. Dominio — `src/domain/`
+## New domain (src/domain)
 
-- `types.ts`:
-  - `FileRecord`: agregar `tags: string[]`.
-  - `Note`: agregar `tags: string[]`.
-  - `ChunkMetadata`: agregar `tags: string[]` (se propaga a `SearchResult`).
-- `ports.ts`:
-  - Nuevo puerto `Tagger { generate(text: string): Promise<string[]> }`.
-  - `DocumentRepository`: agregar `setTags(id, tags)` y `listTags(userId): string[]`.
-  - `NoteRepository`: agregar `setTags(id, tags)` y `listTags(userId): string[]`.
-  - `VectorIndex` (`index(...)` **no cambia** — los tags se aplican con `setTags`
-    después de indexar):
-    - nuevo `setTags(fileId, tags, userId)`: actualiza el payload `tags` de todos
-      los chunks de ese documento (mismo patrón que `renameFile`).
-    - `search(vector, userId, topK?, tags?)`: filtro opcional por tags
-      (coincide si el chunk tiene **cualquiera** de los tags pedidos).
-- `date.ts` (**nuevo, puro, sin deps**): `toIsoDate(input: string): string | null`
-  → normaliza fechas variadas a `YYYY-MM-DD`. Lo usa el tagger (al generar) y la
-  normalización de tags escritos a mano en la web; el filtro de búsqueda recibe
-  tags ya normalizados (vía `list_available_tags`), así que no lo necesita.
+### `types.ts` — add
 
-### 2. Infraestructura
+```ts
+export interface IncomingEmail {
+  // Stable provider id (Gmail message id) — used for dedup, never re-ingest.
+  providerId: string;
+  from: string;          // sender address, lowercased
+  subject: string;
+  body: string;          // plain-text body (HTML stripped)
+  receivedAt: string;    // ISO date
+  attachments: EmailAttachment[];
+}
 
-- `llm/llmTagger.ts` (**nuevo**): implementa `Tagger` con `ChatOpenAI` (igual
-  patrón que `LlmTitler`). Prompt con ejemplos; pide JSON array de strings.
-  Post-proceso: minúsculas, trim, dedupe, recorte a un máximo (p. ej. 8), y
-  normaliza entradas que parezcan fecha con `toIsoDate`.
-- `vector/qdrantVectorIndex.ts`:
-  - `index(...)`: escribir `tags: []` en el payload (se llenan luego con `setTags`).
-  - `ensureCollection()`: crear payload index `tags` (keyword).
-  - `setTags(fileId, tags, userId)`: `setPayload` filtrando por `fileId`+`userId`
-    (mismo patrón que `renameFile`).
-  - `search(...)`: si llegan `tags`, añadir al `filter.must` un
-    `{ key: "tags", match: { any: tags } }`.
-- `persistence/sqliteDocumentRepository.ts`:
-  - `CREATE TABLE files`: columna `tags`.
-  - `INSERT` / `mapRow`: serializar/parsear JSON de tags.
-  - `setTags(id, tags)` y `listTags(userId)` (distintos sobre el JSON).
-- `persistence/sqliteNoteRepository.ts`: análogo (columna `tags`, `setTags`,
-  `listTags`).
+export interface EmailAttachment {
+  filename: string;
+  mimeType: string;
+  content: Buffer;
+}
 
-### 3. Casos de uso — `src/application/`
+// Persisted, RAG-searchable email (separate from Note/FileRecord).
+export interface EmailRecord {
+  id: string;
+  userId: number;
+  providerId: string;
+  from: string;
+  subject: string;
+  body: string;
+  receivedAt: string;
+  createdAt: string;
+  tags: string[];
+}
+```
 
-- `embedAndIndex.ts`: **sin cambios** (los tags no se pasan al indexar; se
-  aplican después con `vectorIndex.setTags`).
-- `safeGenerateTags.ts` (**nuevo**): wrapper best-effort sobre `Tagger` (devuelve
-  `[]` si no hay tagger o si falla), espejo de `safeGenerateTitle`.
-- `indexPdf.ts` / `indexImage.ts` / `indexNote.ts`:
-  - Recibir un `Tagger | null` opcional.
-  - Tras indexar con éxito y sobre el mismo `sourceText` que usa el título (en
-    PDF, el de OCR si hizo falta): generar tags best-effort y aplicarlos con
-    `repo.setTags` / `notes.setTags` + `vectorIndex.setTags`. Mismo lugar y
-    patrón que la asignación del título (`applyName` / bloque de rename).
-- `askQuestion.ts`:
-  - `search_medical_records`: nuevo parámetro opcional `tags: string[]`; se pasa a
-    `vectorIndex.search`. Cada resultado incluye `tags` en el JSON devuelto.
-  - Nueva herramienta `list_available_tags`: devuelve los tags distintos del
-    usuario (unión de `repo.listTags` + `notes.listTags`) para que el modelo sepa
-    qué puede filtrar. Requiere inyectar `NoteRepository` en `AskQuestion`.
-  - Actualizar `SYSTEM_PROMPT`: explicar tags y cuándo filtrar por ellos.
+### `ports.ts` — add
 
-### 4. UI web — `src/infrastructure/web/webServer.ts`
+```ts
+// Allowlist of sender addresses to ingest. Mirrors PasswordVault's shape so the
+// web UI can list/add/remove entries.
+export interface EmailAllowlist {
+  add(address: string): void;
+  getAll(): string[];                                  // lowercased addresses
+  list(): { id: number; address: string }[];
+  remove(id: number): boolean;
+  has(address: string): boolean;
+  count(): number;
+}
 
-**Archivos**
-- Render: chips de tags por fila de archivo, con botón para agregar (input) y
-  quitar (✕ por chip).
-- Filtro: clic en un chip filtra la lista local por ese tag (además del buscador).
-- Nuevo endpoint `PATCH /api/files/:id/tags` con body `{ tags: string[] }` →
-  normaliza (minúsculas, trim, dedupe, cap) → `repo.setTags(id, tags)` +
-  `vectorIndex.setTags(id, tags, userId)`.
-- `/api/files` ya devuelve `FileRecord`, que ahora incluye `tags`.
+// Persists ingested emails (their text body). Embedded into Qdrant for RAG,
+// like NoteRepository.
+export interface EmailRepository {
+  save(userId: number, email: IncomingEmail): EmailRecord;
+  list(userId: number): EmailRecord[];
+  get(id: string, userId: number): EmailRecord | null;
+  // Dedup guard: returns true if this provider message was already ingested.
+  existsByProviderId(userId: number, providerId: string): boolean;
+  setTags(id: string, tags: string[]): void;
+  listTags(userId: number): string[];
+  delete(id: string, userId: number): boolean;
+}
 
-**Notas** (la web hoy no lista notas — se agrega)
-- Nueva sección "Notas" (otra `card`) que lista las notas del usuario con su
-  título, un extracto del texto y chips de tags editables.
-- Endpoints nuevos:
-  - `GET /api/notes` → `notes.list(userId)` (cada `Note` ahora incluye `tags`).
-  - `PATCH /api/notes/:id/tags` con body `{ tags: string[] }` → normaliza →
-    `notes.setTags(id, tags)` + `vectorIndex.setTags(id, tags, userId)` (las
-    notas se indexan en Qdrant bajo `note.id`, así que `setTags` funciona igual).
-  - `DELETE /api/notes/:id` → `DeleteNote` (borra nota + vectores).
-- La creación de notas sigue siendo por Telegram (botón **Nota**); la web solo
-  lista / edita tags / borra.
-- `webServer.ts` recibe ahora también `notes` (NoteRepository), `deleteNote`
-  (DeleteNote) y `vectorIndex` (para `setTags`).
+// Driver port: a source of new emails. Implemented by a Gmail adapter.
+export interface EmailSource {
+  // Returns emails newer than the last seen marker. Implementation handles
+  // auth, paging, and "unread/after:<cursor>" filtering.
+  fetchNew(): Promise<IncomingEmail[]>;
+}
+```
 
-### 5. Wiring — `src/main.ts`
+---
 
-- Construir `LlmTagger` cuando haya `deepseekApiKey` (igual que `LlmTitler`);
-  `null` si no.
-- Inyectar el tagger en `IndexPdf`, `IndexImage`, `IndexNote`.
-- Inyectar `notes` (NoteRepository) en `AskQuestion`.
-- Pasar `notes`, `deleteNote` y `vectorIndex` a `startWebServer` (para listar /
-  editar tags / borrar notas desde la web).
+## New application use cases (src/application)
 
-## Telegram
+### `indexEmail.ts` — `IndexEmail`
 
-- Los archivos/notas se auto-taggean al indexar (sin cambios de flujo para el
-  usuario). Mostrar los tags en `replyFilesList` (opcional, mejora de lectura).
-- **Edición manual de tags**: vive en la UI web, tanto para archivos como para
-  notas (la web ahora lista notas — ver sección 4).
+Mirrors `IndexNote`:
 
-## Validación
+1. `emails.save(userId, email)` → `EmailRecord`.
+2. Build searchable text (`subject + "\n\n" + body`), `embedAndIndex(...)` under
+   `emailRecord.id` (so delete can remove its vectors).
+3. `safeGenerateTags(tagger, text)` → `emails.setTags` + `vectorIndex.setTags`.
 
-- `bun run typeCheck` debe pasar sin errores.
-- `./reset.sh` para recrear el esquema SQLite + la colección Qdrant con el nuevo
-  payload index.
-- Prueba manual: subir un PDF → ver tags auto-generados en la UI; editar tags;
-  crear una nota por Telegram → verla en la web y editar sus tags / borrarla;
-  preguntar al bot algo que se beneficie del filtro (ej. "exámenes de orina").
+Reuses `embedAndIndex`, `safeGenerateTags`, `safeGenerateTitle` exactly like notes.
 
-## Decisiones resueltas / menores
+### `ingestEmail.ts` — `IngestEmail` (orchestrator)
 
-- **Tags de notas en la web**: sí, la web listará notas y permitirá editar sus
-  tags y borrarlas (sección 4). La creación sigue por Telegram.
-- **Generación de tags**: tagger separado (espejo de `LlmTitler`), no se combina
-  con la generación del título.
-- **Límite de tags por documento**: recortar a 8 en el post-proceso del tagger
-  para evitar ruido.
-- **Tags escritos a mano (web)**: el servidor los normaliza (minúsculas, trim,
-  dedupe, cap a 8; fechas vía `toIsoDate`) antes de persistir.
+```ts
+async run(userId: number): Promise<{ emails: number; pdfs: number }>
+```
+
+1. `emails = await source.fetchNew()`.
+2. For each email:
+   - Skip if `!allowlist.has(email.from)`.
+   - Skip if `emailRepo.existsByProviderId(userId, email.providerId)` (dedup).
+   - `await indexEmail.run({ userId, email })`.
+   - For each PDF attachment (`mimeType === "application/pdf"`):
+     - `repo.save(userId, filename, mimeType, content)` → `FileRecord`
+       (dedup by sha256 already handled in `DocumentRepository.findByContent`).
+     - `await indexPdf.run({ buffer, fileId, fileName, userId })`.
+3. Return counts for logging / Telegram notification.
+
+Non-PDF attachments: store via `repo.save` only (same as bot behavior for
+non-PDF documents), no indexing.
+
+---
+
+## New infrastructure adapters (src/infrastructure)
+
+### Persistence (shared `data/app.db`)
+
+- `persistence/sqliteEmailAllowlist.ts` — `SqliteEmailAllowlist implements EmailAllowlist`.
+  Table `email_allowlist (id, address, created_at)`. Copy `SqlitePasswordVault`
+  structure; normalize `address` to lowercase/trim on `add`/`has`.
+- `persistence/sqliteEmailRepository.ts` — `SqliteEmailRepository implements EmailRepository`.
+  Table `emails (id, user_id, provider_id, from_addr, subject, body, received_at,
+  created_at, tags)`. Unique index on `(user_id, provider_id)` for dedup. Copy
+  `SqliteNoteRepository` patterns (tags stored as JSON text column).
+
+### Email source: `infrastructure/email/`
+
+Two viable Gmail strategies — **decide before building**:
+
+**Option A — Gmail API (recommended).**
+- `GmailApiSource implements EmailSource` using OAuth2 refresh token.
+- Query `users.messages.list` with `q="is:unread"` (or `after:<epoch>` cursor),
+  then `users.messages.get` (format=full) per id; decode base64url body + parts.
+- Pros: robust, official, granular scopes (`gmail.readonly`), label/read-state
+  control. Cons: one-time OAuth consent + storing a refresh token.
+- Env: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`,
+  `GMAIL_USER` (the mailbox address).
+
+**Option B — IMAP.**
+- `ImapEmailSource implements EmailSource` via an IMAP client (e.g. `imapflow`) +
+  `mailparser` for MIME/attachment parsing.
+- Requires a Google **App Password** (2FA) — `GMAIL_USER`, `GMAIL_APP_PASSWORD`.
+- Pros: simpler auth, no OAuth dance. Cons: app passwords are coarse, less future-proof.
+
+Either adapter must:
+- Strip HTML → plain text for the body.
+- Expose attachments as `{ filename, mimeType, content: Buffer }`.
+- Track a cursor (last `internalDate` / UID) so `fetchNew()` only returns unseen
+  mail. Persist the cursor in a small `kv`/`email_state` table or rely on the
+  `emails.provider_id` dedup + an `after:` query.
+
+### Cursor / scheduling
+
+- A poller in `main.ts` (like the existing `setInterval` session sweep) calls
+  `ingestEmail.run(userId)` every `EMAIL_POLL_SECONDS` (default e.g. 300s).
+- Optionally notify the allowed user via `bot.notify(...)` with a summary
+  (`N emails, M PDFs ingested`).
+
+---
+
+## Config (src/infrastructure/config.ts) — add
+
+```
+EMAIL_ENABLED=true|false           # master switch; off by default
+EMAIL_PROVIDER=gmail-api|imap
+EMAIL_POLL_SECONDS=300
+EMAIL_USER_ID=<telegram id that owns ingested mail>   # which userId to attribute
+# Gmail API:
+GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_USER
+# IMAP:
+GMAIL_USER, GMAIL_APP_PASSWORD
+```
+
+Add the parsed fields to `BotConfig`. Keep email **disabled by default** so the
+app still boots without Gmail credentials (mirror how `deepseekApiKey` is optional).
+
+`.env.example`: document all new vars.
+
+---
+
+## Composition root (src/main.ts) — wire-up
+
+1. Construct `const emailAllowlist = new SqliteEmailAllowlist(db);`
+2. Construct `const emailRepo = new SqliteEmailRepository(db);`
+3. `const indexEmail = new IndexEmail(chunker, embedder, vectorIndex, emailRepo, titler, tagger);`
+4. If `cfg.emailEnabled`, construct the chosen `EmailSource` and
+   `const ingestEmail = new IngestEmail(source, emailAllowlist, emailRepo, repo, indexEmail, indexPdf);`
+5. Add an `setInterval(() => ingestEmail.run(cfg.emailUserId), cfg.emailPollMs)`,
+   cleared on SIGINT/SIGTERM alongside the session sweep.
+
+---
+
+## Web UI (web/) — allowlist + ingested emails
+
+Mirror the existing Passwords feature:
+
+- Backend (`webServer.ts`): add JSON routes
+  - `GET /api/email-allowlist`, `POST /api/email-allowlist`, `DELETE /api/email-allowlist/:id`
+  - `GET /api/emails`, `DELETE /api/emails/:id`
+  - (optional) `POST /api/email/sync` to trigger `ingestEmail.run` on demand.
+- Frontend: new `components/EmailAllowlistCard.tsx` (copy `PasswordsCard.tsx`)
+  and an emails list (copy `NotesCard.tsx`/`FilesCard.tsx`), tag-filterable.
+- Rebuild + commit `web/dist/` (`bun run build:web`) per AGENTS.md.
+
+Telegram (optional, later): "Correos" / allowlist management buttons mirroring
+the **Contraseña** flow in `botApp.ts`.
+
+---
+
+## Data & reset
+
+- New tables live in the shared `data/app.db`; auto-created via `CREATE TABLE IF NOT EXISTS`.
+- Email PDF attachments are normal `FileRecord`s in `data/files/` + Qdrant — no
+  special storage.
+- **No migrations / no backwards-compat** (per AGENTS.md): `./reset.sh` wipes
+  everything; that is acceptable.
+
+---
+
+## Build order (suggested)
+
+1. Domain: add `IncomingEmail`, `EmailAttachment`, `EmailRecord` + ports
+   (`EmailAllowlist`, `EmailRepository`, `EmailSource`).
+2. Persistence: `SqliteEmailAllowlist`, `SqliteEmailRepository` (+ dedup index).
+3. `IndexEmail` use case (clone `IndexNote`).
+4. `IngestEmail` orchestrator (reuses `IndexPdf`, `DocumentRepository`).
+5. `EmailSource` adapter (start with **one** provider — Gmail API recommended).
+6. Config vars + `.env.example`; wire in `main.ts` with a poller (disabled unless
+   `EMAIL_ENABLED`).
+7. Web API routes + `EmailAllowlistCard` + emails list; `bun run build:web`.
+8. `bun run typeCheck`; manual end-to-end test with one allowlisted sender.
+
+---
+
+## Open questions / decisions to confirm
+
+1. **Auth strategy**: Gmail API (OAuth refresh token) vs IMAP (app password)?
+2. **userId attribution**: all ingested mail belongs to a single configured
+   `EMAIL_USER_ID`, or map sender→user somehow? (single user is simplest.)
+3. **Read-state**: mark Gmail messages read / label them after ingest, or rely
+   purely on the `provider_id` dedup table? (label avoids re-scanning the inbox.)
+4. **Body for RAG**: index `subject + body`, or body only?
+5. **Non-PDF attachments**: store only (current plan) vs also OCR images via the
+   existing `IndexImage` pipeline?
+6. **HTML emails**: which HTML→text approach (and whether to keep the original HTML).
+
+---
+
+## Future (not now): Telegram calendar event creation
+
+Goal: from the Telegram bot, create an event in the user's Google Calendar
+(e.g. a medical appointment, possibly inferred from an ingested email/PDF).
+This is **out of scope for the first build** but the design above is shaped to
+support it cheaply. Keep these hooks in mind so we don't paint ourselves into a
+corner:
+
+### Reuse Google auth
+- If we pick **Gmail API (Option A)**, the same Google Cloud OAuth client and
+  refresh-token flow can request the `https://www.googleapis.com/auth/calendar.events`
+  scope alongside `gmail.readonly`. One consent, two capabilities.
+- Centralize Google OAuth in a shared helper (e.g. `infrastructure/google/googleAuth.ts`)
+  so both `GmailApiSource` and a future `GoogleCalendar` adapter pull tokens from
+  one place. Plan the Gmail adapter to **not** hard-own the OAuth code.
+
+### New port (domain/ports.ts) — add later
+```ts
+export interface CalendarEvent {
+  title: string;
+  description?: string;
+  start: string;          // ISO datetime
+  end?: string;           // ISO datetime; default start + 1h
+  location?: string;
+}
+
+export interface Calendar {
+  createEvent(event: CalendarEvent): Promise<{ id: string; htmlLink: string }>;
+}
+```
+
+### New use case (application) — add later
+- `createCalendarEvent.ts` — `CreateCalendarEvent` takes free-form text (a bot
+  message), uses the existing `Llm` to extract `{ title, start, end, location }`
+  (structured/function-calling, like `LlmTagger`), then calls `Calendar.createEvent`.
+- Could also be exposed as an LLM `Tool` (see the `Tool` interface in `ports.ts`)
+  so the agentic `AskQuestion` flow can schedule events conversationally.
+
+### Driver (Telegram) — add later
+- A **Calendario** button + pending-state flow in `botApp.ts` mirroring the
+  **Nota** flow: prompt for the event text, confirm the parsed datetime, then
+  create it and reply with the `htmlLink`.
+
+### Config — reserve names now
+- `GOOGLE_CALENDAR_ID` (default `primary`), and reuse the Gmail OAuth client
+  (`GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN`) — so when
+  granting Gmail consent, request the calendar scope at the same time to avoid a
+  second consent later.
+
+### Practical takeaway for the email build
+- Choose **Gmail API (OAuth)** over IMAP if calendar is on the roadmap — IMAP
+  (app password) gives no path to Calendar and would force a separate auth setup.
+- Put OAuth token handling in a shared `google/` module from day one.
+```

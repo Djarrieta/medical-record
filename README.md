@@ -6,7 +6,9 @@ Telegram bot que guarda, indexa y responde preguntas sobre documentos médicos u
 
 ```bash
 cp .env.example .env
-# llena BOT_TOKEN, ALLOWED_USER_ID, DEEPSEEK_API_KEY, QDRANT_URL
+# llena BOT_TOKEN, DEEPSEEK_API_KEY, QDRANT_URL
+cp users.json.example users.json
+# llena los usuarios autorizados (id de Telegram, nombre y, opcional, email)
 bun install
 # iniciar contenedores (Qdrant + app)
 sudo docker compose up -d --build

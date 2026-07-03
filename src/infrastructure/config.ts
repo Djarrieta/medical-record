@@ -1,5 +1,17 @@
+import { readFileSync } from "fs";
+
+// A registered user, loaded from users.json (replaces ALLOWED_USER_ID).
+// `email` is the attribution key for forwarded mail — a user with no email can
+// still use the bot but cannot forward emails into the shared mailbox.
+export interface UserRecord {
+  id: number;
+  name: string;
+  email?: string;
+}
+
 export interface BotConfig {
   botToken: string;
+  users: UserRecord[];
   allowedUserIds: number[];
   deepseekApiKey?: string;
   deepseekModel: string;
@@ -15,6 +27,15 @@ export interface BotConfig {
   sessionTtlMs: number;
   sessionWarningGraceMs: number;
   sessionSweepMs: number;
+  // Email ingestion (Gmail poller). Disabled by default so the app boots
+  // without Gmail credentials.
+  emailEnabled: boolean;
+  emailPollMs: number;
+  emailQueryDays: number;
+  gmailClientId?: string;
+  gmailClientSecret?: string;
+  gmailRefreshToken?: string;
+  gmailUser?: string;
 }
 
 export class Config {
@@ -24,12 +45,11 @@ export class Config {
     const botToken = process.env.BOT_TOKEN;
     if (!botToken) throw new Error("BOT_TOKEN is required");
 
-    const allowedUserIds = (process.env.ALLOWED_USER_ID ?? "")
-      .split(",")
-      .map((id) => Number(id.trim()))
-      .filter((id) => Number.isFinite(id) && id !== 0);
-    if (allowedUserIds.length === 0)
-      throw new Error("ALLOWED_USER_ID is required");
+    const usersFile = process.env.USERS_FILE ?? "./users.json";
+    const users = loadUsers(usersFile);
+    if (users.length === 0)
+      throw new Error(`No users found in ${usersFile} (at least one is required)`);
+    const allowedUserIds = users.map((u) => u.id);
 
     const webPort = parseInt(process.env.WEB_PORT ?? "3000", 10);
 
@@ -40,8 +60,13 @@ export class Config {
     );
     const sessionSweepSeconds = parseInt(process.env.SESSION_SWEEP_SECONDS ?? "30", 10);
 
+    const emailEnabled = (process.env.EMAIL_ENABLED ?? "false").toLowerCase() === "true";
+    const emailPollSeconds = parseInt(process.env.EMAIL_POLL_SECONDS ?? "300", 10);
+    const emailQueryDays = parseInt(process.env.EMAIL_QUERY_DAYS ?? "7", 10);
+
     this.botConfig = {
       botToken,
+      users,
       allowedUserIds,
       deepseekApiKey: process.env.DEEPSEEK_API_KEY,
       deepseekModel: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
@@ -57,6 +82,51 @@ export class Config {
       sessionTtlMs: sessionTtlSeconds * 1000,
       sessionWarningGraceMs: sessionWarningGraceSeconds * 1000,
       sessionSweepMs: sessionSweepSeconds * 1000,
+      emailEnabled,
+      emailPollMs: emailPollSeconds * 1000,
+      emailQueryDays,
+      gmailClientId: process.env.GMAIL_CLIENT_ID,
+      gmailClientSecret: process.env.GMAIL_CLIENT_SECRET,
+      gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN,
+      gmailUser: process.env.GMAIL_USER,
     };
   }
+}
+
+// Loads and validates the user registry from a JSON file. Throws on a missing
+// or malformed file (mirrors the old "ALLOWED_USER_ID is required" hard fail).
+function loadUsers(path: string): UserRecord[] {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch {
+    throw new Error(`Users file not found: ${path} (copy users.json.example)`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`Users file ${path} is not valid JSON`);
+  }
+
+  if (!Array.isArray(parsed))
+    throw new Error(`Users file ${path} must be a JSON array`);
+
+  return parsed.map((entry, i) => {
+    if (typeof entry !== "object" || entry === null)
+      throw new Error(`Users file ${path}: entry ${i} is not an object`);
+    const { id, name, email } = entry as Record<string, unknown>;
+    if (typeof id !== "number" || !Number.isFinite(id))
+      throw new Error(`Users file ${path}: entry ${i} has an invalid "id"`);
+    if (typeof name !== "string" || name.trim() === "")
+      throw new Error(`Users file ${path}: entry ${i} has an invalid "name"`);
+    if (email !== undefined && typeof email !== "string")
+      throw new Error(`Users file ${path}: entry ${i} has an invalid "email"`);
+    return {
+      id,
+      name,
+      email: typeof email === "string" ? email.trim() : undefined,
+    };
+  });
 }

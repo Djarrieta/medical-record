@@ -6,6 +6,7 @@ import { openAppDatabase } from "./infrastructure/persistence/sqliteDatabase";
 import { SqliteDocumentRepository } from "./infrastructure/persistence/sqliteDocumentRepository";
 import { SqlitePasswordVault } from "./infrastructure/persistence/sqlitePasswordVault";
 import { SqliteNoteRepository } from "./infrastructure/persistence/sqliteNoteRepository";
+import { SqliteProcessedEmails } from "./infrastructure/persistence/sqliteProcessedEmails";
 import { UnpdfTextExtractor } from "./infrastructure/pdf/unpdfTextExtractor";
 import { TesseractOcr } from "./infrastructure/ocr/tesseractOcr";
 import { TransformersEmbedder } from "./infrastructure/embedding/transformersEmbedder";
@@ -17,6 +18,8 @@ import { LlmTagger } from "./infrastructure/llm/llmTagger";
 import { InMemorySessionStore } from "./infrastructure/session/sessionStore";
 import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
+import { createGoogleAuth } from "./infrastructure/google/googleAuth";
+import { GmailApiSource } from "./infrastructure/email/gmailApiSource";
 
 import { IndexPdf } from "./application/indexPdf";
 import { IndexImage } from "./application/indexImage";
@@ -25,6 +28,7 @@ import { UpdateNote } from "./application/updateNote";
 import { DeleteNote } from "./application/deleteNote";
 import { AskQuestion } from "./application/askQuestion";
 import { DeleteDocument } from "./application/deleteDocument";
+import { IngestEmail } from "./application/ingestEmail";
 
 // Composition root: the only place that knows concrete adapters.
 // It wires infrastructure into the application use cases and starts the drivers.
@@ -73,6 +77,21 @@ if (cfg.deepseekApiKey) {
   askQuestion = new AskQuestion(embedder, vectorIndex, llm, repo, sessions, notes);
 }
 
+// Email ingestion is optional — only wired when EMAIL_ENABLED and Gmail creds
+// are present, mirroring how AskQuestion is optional.
+let ingestEmail: IngestEmail | null = null;
+if (cfg.emailEnabled) {
+  const auth = createGoogleAuth(cfg);
+  const source = new GmailApiSource(auth, cfg.emailQueryDays);
+  const processed = new SqliteProcessedEmails(db);
+  const emailToUserId = new Map(
+    cfg.users
+      .filter((u) => u.email)
+      .map((u) => [u.email!.toLowerCase().trim(), u.id] as const),
+  );
+  ingestEmail = new IngestEmail(source, emailToUserId, processed, repo, indexNote, indexPdf, indexImage);
+}
+
 // --- Driver adapters ---
 const bot = new BotApp(
   cfg,
@@ -107,14 +126,49 @@ const sweep = setInterval(() => {
   }
 }, cfg.sessionSweepMs);
 
+// Email poller: self-rescheduling setTimeout (not setInterval) with an in-flight
+// flag, so a slow cycle (Gmail fetch + OCR + LLM tagging) can never overlap the
+// next run.
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+if (ingestEmail) {
+  const job = ingestEmail;
+  let polling = false;
+  const schedule = () => {
+    pollTimer = setTimeout(tick, cfg.emailPollMs);
+  };
+  const tick = async () => {
+    if (polling) {
+      schedule();
+      return;
+    }
+    polling = true;
+    try {
+      const r = await job.run();
+      if (r.emails > 0)
+        console.log(
+          `Email poll: ${r.emails} emails, ${r.pdfs} PDFs, ${r.images} images, ${r.others} others.`,
+        );
+    } catch (err) {
+      console.error("Email poll failed:", err);
+    } finally {
+      polling = false;
+      schedule();
+    }
+  };
+  console.log(`Email ingestion enabled (every ${cfg.emailPollMs / 1000}s).`);
+  schedule();
+}
+
 process.on("SIGINT", async () => {
   clearInterval(sweep);
+  if (pollTimer) clearTimeout(pollTimer);
   await bot.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
   clearInterval(sweep);
+  if (pollTimer) clearTimeout(pollTimer);
   await bot.stop();
   process.exit(0);
 });

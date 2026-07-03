@@ -26,7 +26,8 @@
 ## Environment & secrets
 
 - **`.env` contains bot token and API keys** — in `.gitignore`, never commit.
-- `.env.example` shows the schema: `BOT_TOKEN`, `ALLOWED_USER_ID`, `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL`, `DATA_DIR`, `QDRANT_URL`, `EMBEDDING_MODEL`.
+- `.env.example` shows the schema: `BOT_TOKEN`, `USERS_FILE`, `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL`, `DATA_DIR`, `QDRANT_URL`, `EMBEDDING_MODEL`, and the optional email vars (`EMAIL_ENABLED`, `EMAIL_POLL_SECONDS`, `EMAIL_QUERY_DAYS`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_USER`).
+- **User registry**: authorized users live in `users.json` (gitignored; `users.json.example` ships the schema `[{ id, name, email? }]`). `USERS_FILE` (default `./users.json`) points at it. `Config` loads it at boot and exposes `config.users` + `config.allowedUserIds`. This **replaces** the old `ALLOWED_USER_ID` env var. A user's `email` is the attribution key for forwarded mail.
 - `DEEPSEEK_API_KEY` is optional — without it text questions return an error but file upload/indexing still work.
 - `WEB_PORT`, `WEB_HOST`, `WEB_PASSWORD` configure the web UI for file upload (always started; `WEB_PORT` defaults to `3000`).
 
@@ -74,7 +75,7 @@ The bot is **conversational, not command-driven** — `/start` is the only comma
 | **Nota** | Prompts for text; the next message is saved as a note via `IndexNote` (`pendingNote` set). |
 | **Notas** | Lists notes with an inline 🗑️ button per note (callback `delnote:<id>` → `DeleteNote`). |
 
-- Allowlist: `ALLOWED_USER_ID` is a comma-separated list of Telegram user IDs; only those pass the auth middleware in `BotApp.registerMiddlewares()`.
+- Allowlist: authorized Telegram user IDs come from `config.allowedUserIds` (built from `users.json`); only those pass the auth middleware in `BotApp.registerMiddlewares()`.
 - Text splitting lives in `RecursiveChunker`: `RecursiveCharacterTextSplitter`, `chunkSize` 1000, `chunkOverlap` 200 (`src/infrastructure/text/recursiveChunker.ts`).
 - Pending password state is held in-memory per user (`pendingPasswords` map); successful passwords are persisted to the `PasswordVault` for reuse.
 

@@ -1,4 +1,4 @@
-import type { ConversationMessage, FileRecord, Note, SearchResult, Session } from "./types";
+import type { ConversationMessage, FileRecord, IncomingEmail, Note, SearchResult, Session } from "./types";
 
 // Ports = interfaces the domain/application need. Infrastructure implements them.
 // Dependencies point inward: use cases depend on these, never on concrete adapters.
@@ -148,4 +148,18 @@ export interface Llm {
     userMessage: string,
     tools: Tool[],
   ): Promise<string>;
+}
+
+// Driver port: a source of new emails. Implemented by GmailApiSource.
+export interface EmailSource {
+  // Recent emails within the configured day-window. Dedup is handled downstream
+  // (ProcessedEmailLog), so this may return mail already ingested. The
+  // implementation handles auth, paging, HTML→text and attachment decoding.
+  fetchRecent(): Promise<IncomingEmail[]>;
+}
+
+// Tiny dedup log so the poller never re-ingests the same Gmail message.
+export interface ProcessedEmailLog {
+  has(providerId: string): boolean;
+  mark(providerId: string): void;
 }
