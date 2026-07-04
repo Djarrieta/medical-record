@@ -66,11 +66,15 @@ export class IngestEmail {
     const result: IngestEmailResult = { emails: 0, pdfs: 0, images: 0, events: 0, others: 0 };
 
     const incoming = await this.source.fetchRecent();
+    console.log(`Email poll: fetched ${incoming.length} recent message(s).`);
 
     for (const email of incoming) {
       const userId = this.emailToUserId.get(email.from);
       if (userId === undefined) continue; // not a registered user's address
       if (this.processed.has(email.providerId)) continue; // already ingested
+
+      const label = `"${email.subject}" from ${email.from}`;
+      console.log(`Processing email ${label}...`);
 
       try {
         // Body → Note, but only when it carries useful health information.
@@ -82,11 +86,14 @@ export class IngestEmail {
             ? await this.summarizer.summarize(email.subject, body)
             : `${email.subject}\n\n${email.body}`;
           if (noteText) {
+            console.log(`  → saving note from body of ${label}`);
             await this.indexNote.run({
               text: noteText,
               userId,
               title: email.subject,
             });
+          } else {
+            console.log(`  → body of ${label} dropped as noise (no note)`);
           }
         }
 
@@ -111,6 +118,7 @@ export class IngestEmail {
           if (!isPdf && !isImage) {
             // Not indexable → not stored. Better to drop it than to archive a
             // file we can never search.
+            console.log(`  → dropping non-indexable attachment ${att.filename} (${att.mimeType})`);
             result.others += 1;
             continue;
           }
@@ -122,6 +130,7 @@ export class IngestEmail {
             (await this.repo.save(userId, att.filename, att.mimeType, att.content));
 
           if (isPdf) {
+            console.log(`  → indexing PDF attachment ${att.filename}`);
             await this.indexPdf.run({
               buffer: att.content,
               fileId: rec.id,
@@ -130,6 +139,7 @@ export class IngestEmail {
             });
             result.pdfs += 1;
           } else {
+            console.log(`  → indexing image attachment ${att.filename}`);
             await this.indexImage.run({
               buffer: att.content,
               fileId: rec.id,
@@ -144,8 +154,9 @@ export class IngestEmail {
         // the next poll retry it.
         this.processed.mark(email.providerId);
         result.emails += 1;
+        console.log(`Finished email ${label}`);
       } catch (err) {
-        console.error(`Email ingestion failed for ${email.providerId}:`, err);
+        console.error(`Email ingestion failed for ${label} (${email.providerId}):`, err);
       }
     }
 
@@ -183,6 +194,7 @@ export class IngestEmail {
       for (const ev of events) {
         const base = ev.title.trim() || subject.trim() || "Cita";
         const title = userName ? `${userName}: ${base}` : base;
+        console.log(`  → creating calendar event "${title}" (${ev.startIso})`);
         await this.calendar.createEvent({
           title,
           description: ev.description,
