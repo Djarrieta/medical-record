@@ -11,11 +11,10 @@ import { Navbar, type View } from "./components/Navbar";
 import { UploadCard } from "./components/UploadCard";
 import { FilesCard } from "./components/FilesCard";
 import { NotesCard } from "./components/NotesCard";
-import { ChatView } from "./components/ChatView";
 import { PasswordsCard } from "./components/PasswordsCard";
 
 export function App() {
-  const [view, setView] = useState<View>("chat");
+  const [view, setView] = useState<View>("files");
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [activeTag, setActiveTag] = useState("");
@@ -104,8 +103,6 @@ export function App() {
       <Navbar active={view} onChange={changeView} />
 
       <main className="view">
-        {view === "chat" && <ChatView />}
-
         {view === "files" && (
           <>
             <UploadCard onUploaded={reloadFiles} />

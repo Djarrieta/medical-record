@@ -24,17 +24,6 @@ export interface Password {
   password: string;
 }
 
-export interface ChatSource {
-  id: string;
-  name: string;
-}
-
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  sources?: ChatSource[];
-}
-
 export interface UploadResult {
   ok: boolean;
   expired?: boolean;

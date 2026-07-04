@@ -192,6 +192,5 @@ startWebServer({
   deleteNote,
   vectorIndex,
   vault,
-  askQuestion,
   sessions,
 });

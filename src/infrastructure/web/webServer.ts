@@ -5,7 +5,6 @@ import type { IndexPdf } from "../../application/indexPdf";
 import type { IndexImage } from "../../application/indexImage";
 import type { IndexNote } from "../../application/indexNote";
 import type { UpdateNote } from "../../application/updateNote";
-import type { AskQuestion } from "../../application/askQuestion";
 import type { DeleteDocument } from "../../application/deleteDocument";
 import type { DeleteNote } from "../../application/deleteNote";
 import { isImageBuffer } from "../../domain/fileType";
@@ -24,7 +23,6 @@ interface WebServerOptions {
   deleteNote: DeleteNote;
   vectorIndex: VectorIndex;
   vault: PasswordVault;
-  askQuestion: AskQuestion | null;
   sessions: SessionStore;
 }
 
@@ -244,29 +242,6 @@ export function startWebServer(options: WebServerOptions): void {
         return new Response(JSON.stringify({ ok: true }), {
           headers: { "Content-Type": "application/json" },
         });
-      }
-
-      // --- Chat (agentic RAG) ---
-      if (method === "POST" && url.pathname === "/api/chat") {
-        const userId = authUser();
-        if (userId === null) return new Response("Unauthorized", { status: 401 });
-        if (!options.askQuestion) {
-          return jsonResponse(
-            { ok: false, error: "El chat no está disponible (falta DEEPSEEK_API_KEY)." },
-            503,
-          );
-        }
-        const body = await readJsonBody(req);
-        const question = body && typeof body.question === "string" ? body.question.trim() : "";
-        if (!question) return jsonResponse({ ok: false, error: "Pregunta vacía" }, 400);
-        try {
-          const result = await options.askQuestion.run(question, userId);
-          const documents = result.documents.map((d) => ({ id: d.id, name: d.originalName }));
-          return jsonResponse({ ok: true, answer: result.answer, documents });
-        } catch (err) {
-          console.error("Chat error:", err);
-          return jsonResponse({ ok: false, error: String(err) }, 500);
-        }
       }
 
       // --- Passwords (PDF unlock vault; shared, not per-user) ---

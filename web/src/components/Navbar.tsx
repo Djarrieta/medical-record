@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import { IconChat, IconFiles, IconLock, IconNote } from "../icons";
+import { IconFiles, IconLock, IconNote } from "../icons";
 
-export type View = "chat" | "files" | "passwords" | "notes";
+export type View = "files" | "passwords" | "notes";
 
 interface NavItem {
   id: View;
@@ -10,7 +10,6 @@ interface NavItem {
 }
 
 const ITEMS: NavItem[] = [
-  { id: "chat", label: "Chat", icon: <IconChat /> },
   { id: "files", label: "Archivos", icon: <IconFiles /> },
   { id: "passwords", label: "Contraseñas", icon: <IconLock /> },
   { id: "notes", label: "Notas", icon: <IconNote /> },
