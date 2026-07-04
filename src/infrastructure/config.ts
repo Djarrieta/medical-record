@@ -1,6 +1,4 @@
-import { readFileSync } from "fs";
-
-// A registered user, loaded from users.json (replaces ALLOWED_USER_ID).
+// A registered user, loaded from the USERS env var (replaces ALLOWED_USER_ID).
 // `email` is the attribution key for forwarded mail — a user with no email can
 // still use the bot but cannot forward emails into the shared mailbox.
 export interface UserRecord {
@@ -47,7 +45,7 @@ export class Config {
 
     const users = loadUsers();
     if (users.length === 0)
-      throw new Error("No users configured (set USERS or USERS_FILE; at least one is required)");
+      throw new Error("No users configured (set USERS; at least one is required)");
     const allowedUserIds = users.map((u) => u.id);
 
     const webPort = parseInt(process.env.WEB_PORT ?? "3000", 10);
@@ -92,26 +90,18 @@ export class Config {
   }
 }
 
-// Loads and validates the user registry. Prefers an inline `USERS` env var
-// (a JSON array — handy so the server only maintains a single .env file); falls
-// back to the `USERS_FILE` JSON file (default ./users.json). Throws on a missing
-// or malformed source (mirrors the old "ALLOWED_USER_ID is required" hard fail).
+// Loads and validates the user registry from the inline `USERS` env var (a JSON
+// array — keeps the server to a single .env file). Throws on a missing or
+// malformed value (mirrors the old "ALLOWED_USER_ID is required" hard fail).
 function loadUsers(): UserRecord[] {
   const inline = process.env.USERS?.trim();
-  if (inline) return parseUsers(inline, "USERS env var");
-
-  const path = process.env.USERS_FILE ?? "./users.json";
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf-8");
-  } catch {
-    throw new Error(`Users source not found: set USERS in .env (a JSON array), or create ${path}`);
-  }
-  return parseUsers(raw, `Users file ${path}`);
+  if (!inline)
+    throw new Error("USERS is required (set it in .env to a JSON array of users)");
+  return parseUsers(inline, "USERS env var");
 }
 
 // Parses + validates a JSON array of users from a raw string. `source` labels
-// error messages (either the env var or the file path).
+// error messages.
 function parseUsers(raw: string, source: string): UserRecord[] {
   let parsed: unknown;
   try {

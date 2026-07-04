@@ -14,12 +14,14 @@ export interface IngestEmailResult {
 // Use case: poll the shared mailbox and ingest every email forwarded from a
 // registered user's address. The body becomes a Note (RAG-searchable) and each
 // attachment is routed exactly like a Telegram upload (PDF → IndexPdf, image →
-// IndexImage, other → store only). Attribution is the users.json email match
-// only; unmatched senders are ignored silently. Dedup is by Gmail providerId.
+// IndexImage, other → store only). Attribution is the user-registry email match
+// only (the USERS env var); unmatched senders are ignored silently.
+// Dedup is by Gmail providerId.
 export class IngestEmail {
   constructor(
     private readonly source: EmailSource,
-    // Lowercased/trimmed forwarder email → userId, built from users.json.
+    // Lowercased/trimmed forwarder email → userId, built from the user registry
+    // (config.users — the USERS env var).
     private readonly emailToUserId: Map<string, number>,
     private readonly processed: ProcessedEmailLog,
     private readonly repo: DocumentRepository,
