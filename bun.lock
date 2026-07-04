@@ -9,6 +9,7 @@
         "@langchain/openai": "1.4.5",
         "@langchain/textsplitters": "^1.0.1",
         "@qdrant/js-client-rest": "^1.18.0",
+        "adm-zip": "^0.5.17",
         "googleapis": "^173.0.0",
         "grammy": "1.30.0",
         "html-to-text": "^10.0.0",
