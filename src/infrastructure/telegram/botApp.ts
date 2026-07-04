@@ -14,7 +14,7 @@ import type { IndexImage } from "../../application/indexImage";
 import type { IndexNote } from "../../application/indexNote";
 import type { DeleteNote } from "../../application/deleteNote";
 import type { AskQuestion } from "../../application/askQuestion";
-import { isImageBuffer } from "../util/fileType";
+import { isImageBuffer } from "../../domain/fileType";
 
 // Escape text for Telegram's HTML parse mode (titles/names may contain <, >, &).
 function escapeHtml(text: string): string {

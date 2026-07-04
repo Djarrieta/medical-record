@@ -153,34 +153,6 @@ export async function deletePassword(id: number): Promise<boolean> {
   }
 }
 
-export interface ChatReply {
-  ok: boolean;
-  answer?: string;
-  documents?: { id: string; name: string }[];
-  error?: string;
-}
-
-export async function askChat(question: string): Promise<ChatReply> {
-  try {
-    const res = await fetch("/api/chat?" + authQuery(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
-    });
-    if (res.status === 401) {
-      onExpired();
-      return { ok: false, error: "Sesión expirada" };
-    }
-    const data = (await res.json().catch(() => ({}))) as Partial<ChatReply>;
-    if (!res.ok || !data.ok) {
-      return { ok: false, error: data.error ? String(data.error) : "HTTP " + res.status };
-    }
-    return { ok: true, answer: data.answer, documents: data.documents };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
 // Replaces the full tag list for a file/note. Returns the normalized tags the
 // server stored, or null on failure.
 export async function patchTags(

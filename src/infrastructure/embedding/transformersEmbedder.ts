@@ -1,9 +1,7 @@
 import { pipeline } from "@huggingface/transformers";
 import type { FeatureExtractionPipeline } from "@huggingface/transformers";
-import { join } from "path";
 
 import type { Embedder } from "../../domain/ports";
-
 export class TransformersEmbedder implements Embedder {
   private pipe: FeatureExtractionPipeline | null = null;
   private modelName: string;

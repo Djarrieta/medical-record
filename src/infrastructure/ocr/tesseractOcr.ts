@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 import type { Ocr } from "../../domain/ports";
-import { isPdfBuffer } from "../util/fileType";
+import { isPdfBuffer } from "../../domain/fileType";
 
 // OCR adapter for scanned/image-only documents.
 // PDFs: pdftoppm (poppler) rasterizes each page to PNG, then tesseract reads

@@ -1,5 +1,15 @@
+// A registered user, loaded from the USERS env var (replaces ALLOWED_USER_ID).
+// `email` is the attribution key for forwarded mail — a user with no email can
+// still use the bot but cannot forward emails into the shared mailbox.
+export interface UserRecord {
+  id: number;
+  name: string;
+  email?: string;
+}
+
 export interface BotConfig {
   botToken: string;
+  users: UserRecord[];
   allowedUserIds: number[];
   deepseekApiKey?: string;
   deepseekModel: string;
@@ -15,6 +25,21 @@ export interface BotConfig {
   sessionTtlMs: number;
   sessionWarningGraceMs: number;
   sessionSweepMs: number;
+  // Email ingestion (Gmail poller). Disabled by default so the app boots
+  // without Gmail credentials.
+  emailEnabled: boolean;
+  emailPollMs: number;
+  emailQueryDays: number;
+  gmailClientId?: string;
+  gmailClientSecret?: string;
+  gmailRefreshToken?: string;
+  gmailUser?: string;
+  // Calendar scheduling (Google Calendar). Disabled by default; reuses the same
+  // Google OAuth credentials as email (the calendar.events scope is already in
+  // GOOGLE_SCOPES).
+  calendarEnabled: boolean;
+  calendarId: string;
+  calendarTimeZone: string;
 }
 
 export class Config {
@@ -24,12 +49,10 @@ export class Config {
     const botToken = process.env.BOT_TOKEN;
     if (!botToken) throw new Error("BOT_TOKEN is required");
 
-    const allowedUserIds = (process.env.ALLOWED_USER_ID ?? "")
-      .split(",")
-      .map((id) => Number(id.trim()))
-      .filter((id) => Number.isFinite(id) && id !== 0);
-    if (allowedUserIds.length === 0)
-      throw new Error("ALLOWED_USER_ID is required");
+    const users = loadUsers();
+    if (users.length === 0)
+      throw new Error("No users configured (set USERS; at least one is required)");
+    const allowedUserIds = users.map((u) => u.id);
 
     const webPort = parseInt(process.env.WEB_PORT ?? "3000", 10);
 
@@ -40,8 +63,15 @@ export class Config {
     );
     const sessionSweepSeconds = parseInt(process.env.SESSION_SWEEP_SECONDS ?? "30", 10);
 
+    const emailEnabled = (process.env.EMAIL_ENABLED ?? "false").toLowerCase() === "true";
+    const emailPollSeconds = parseInt(process.env.EMAIL_POLL_SECONDS ?? "300", 10);
+    const emailQueryDays = parseInt(process.env.EMAIL_QUERY_DAYS ?? "7", 10);
+
+    const calendarEnabled = (process.env.CALENDAR_ENABLED ?? "false").toLowerCase() === "true";
+
     this.botConfig = {
       botToken,
+      users,
       allowedUserIds,
       deepseekApiKey: process.env.DEEPSEEK_API_KEY,
       deepseekModel: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
@@ -57,6 +87,57 @@ export class Config {
       sessionTtlMs: sessionTtlSeconds * 1000,
       sessionWarningGraceMs: sessionWarningGraceSeconds * 1000,
       sessionSweepMs: sessionSweepSeconds * 1000,
+      emailEnabled,
+      emailPollMs: emailPollSeconds * 1000,
+      emailQueryDays,
+      gmailClientId: process.env.GMAIL_CLIENT_ID,
+      gmailClientSecret: process.env.GMAIL_CLIENT_SECRET,
+      gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN,
+      gmailUser: process.env.GMAIL_USER,
+      calendarEnabled,
+      calendarId: process.env.GOOGLE_CALENDAR_ID ?? "primary",
+      calendarTimeZone: process.env.CALENDAR_TIMEZONE ?? "America/Bogota",
     };
   }
+}
+
+// Loads and validates the user registry from the inline `USERS` env var (a JSON
+// array — keeps the server to a single .env file). Throws on a missing or
+// malformed value (mirrors the old "ALLOWED_USER_ID is required" hard fail).
+function loadUsers(): UserRecord[] {
+  const inline = process.env.USERS?.trim();
+  if (!inline)
+    throw new Error("USERS is required (set it in .env to a JSON array of users)");
+  return parseUsers(inline, "USERS env var");
+}
+
+// Parses + validates a JSON array of users from a raw string. `source` labels
+// error messages.
+function parseUsers(raw: string, source: string): UserRecord[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${source} is not valid JSON`);
+  }
+
+  if (!Array.isArray(parsed))
+    throw new Error(`${source} must be a JSON array`);
+
+  return parsed.map((entry, i) => {
+    if (typeof entry !== "object" || entry === null)
+      throw new Error(`${source}: entry ${i} is not an object`);
+    const { id, name, email } = entry as Record<string, unknown>;
+    if (typeof id !== "number" || !Number.isFinite(id))
+      throw new Error(`${source}: entry ${i} has an invalid "id"`);
+    if (typeof name !== "string" || name.trim() === "")
+      throw new Error(`${source}: entry ${i} has an invalid "name"`);
+    if (email !== undefined && typeof email !== "string")
+      throw new Error(`${source}: entry ${i} has an invalid "email"`);
+    return {
+      id,
+      name,
+      email: typeof email === "string" ? email.trim() : undefined,
+    };
+  });
 }

@@ -1,4 +1,12 @@
-import type { ConversationMessage, FileRecord, Note, SearchResult, Session } from "./types";
+import type {
+  CalendarEvent,
+  ConversationMessage,
+  FileRecord,
+  IncomingEmail,
+  Note,
+  SearchResult,
+  Session,
+} from "./types";
 
 // Ports = interfaces the domain/application need. Infrastructure implements them.
 // Dependencies point inward: use cases depend on these, never on concrete adapters.
@@ -41,8 +49,25 @@ export interface Tagger {
   generate(text: string): Promise<string[]>;
 }
 
+// Triage + rewrite for forwarded emails. Decides whether an email's body is
+// worth keeping as a note and, if so, rewrites it into a short, clear Spanish
+// summary the user can consult later (e.g. "Cita confirmada para el 12 mar",
+// "Cita cancelada", "Resultados disponibles"). Returns null when the email
+// carries no useful information (marketing, newsletters, automated noise), so
+// the caller skips saving it.
+export interface EmailNoteSummarizer {
+  summarize(subject: string, body: string): Promise<string | null>;
+}
+
 export interface TextExtractor {
   tryExtract(buffer: Buffer, password?: string): Promise<string | null>;
+}
+
+// Expands an archive (zip) into its contained files. Returns a flat list of
+// entries (directories and empty entries skipped). Used to route the files
+// inside a forwarded zip through the normal upload pipeline.
+export interface ArchiveExtractor {
+  extract(buffer: Buffer): Promise<{ filename: string; content: Buffer }[]>;
 }
 
 export interface Chunker {
@@ -148,4 +173,26 @@ export interface Llm {
     userMessage: string,
     tools: Tool[],
   ): Promise<string>;
+}
+
+// Driver port: a source of new emails. Implemented by GmailApiSource.
+export interface EmailSource {
+  // Recent emails within the configured day-window. Dedup is handled downstream
+  // (ProcessedEmailLog), so this may return mail already ingested. The
+  // implementation handles auth, paging, HTML→text and attachment decoding.
+  fetchRecent(): Promise<IncomingEmail[]>;
+}
+
+// Tiny dedup log so the poller never re-ingests the same Gmail message.
+export interface ProcessedEmailLog {
+  has(providerId: string): boolean;
+  mark(providerId: string): void;
+}
+
+// Creates appointments on an external calendar. Implemented by
+// GoogleCalendarService. Optional — only wired when calendar is enabled.
+export interface CalendarService {
+  // Creates an event and returns its id + a link so the caller can confirm it
+  // to the user.
+  createEvent(event: CalendarEvent): Promise<{ id: string; htmlLink: string }>;
 }
