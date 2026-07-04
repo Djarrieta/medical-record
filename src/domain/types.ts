@@ -72,3 +72,13 @@ export interface IncomingEmail {
   receivedAt: string; // ISO date
   attachments: EmailAttachment[];
 }
+
+// A calendar appointment to create. Times are ISO 8601 strings interpreted in
+// `timeZone`. No reminders are configured (the user opted out).
+export interface CalendarEvent {
+  title: string;
+  description?: string;
+  startIso: string; // ISO 8601 (with offset or local + timeZone)
+  endIso: string; // if the caller has no duration, defaults to +1h over start
+  timeZone: string; // e.g. "America/Bogota"
+}

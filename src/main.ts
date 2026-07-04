@@ -20,6 +20,7 @@ import { InMemorySessionStore } from "./infrastructure/session/sessionStore";
 import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
 import { createGoogleAuth } from "./infrastructure/google/googleAuth";
+import { GoogleCalendarService } from "./infrastructure/google/googleCalendarService";
 import { GmailApiSource } from "./infrastructure/email/gmailApiSource";
 import { AdmZipExtractor } from "./infrastructure/archive/admZipExtractor";
 
@@ -65,6 +66,30 @@ const titler = cfg.deepseekApiKey ? new LlmTitler(cfg) : null;
 // Tag generation is optional too, on the same LLM availability.
 const tagger = cfg.deepseekApiKey ? new LlmTagger(cfg) : null;
 
+// Shared Google OAuth client, reused by both email ingestion and calendar
+// scheduling (same consent — the calendar.events scope is already granted).
+// Only built when a Google-backed feature is enabled and the creds are present.
+const googleAuth =
+  (cfg.emailEnabled || cfg.calendarEnabled) &&
+  cfg.gmailClientId &&
+  cfg.gmailClientSecret &&
+  cfg.gmailRefreshToken
+    ? createGoogleAuth(cfg)
+    : null;
+
+// Calendar scheduling is optional — only wired when enabled and Google creds
+// are present. Degrades gracefully (the schedule_appointment tool is not
+// registered) otherwise.
+const calendar =
+  cfg.calendarEnabled && googleAuth ? new GoogleCalendarService(googleAuth, cfg.calendarId) : null;
+if (cfg.calendarEnabled && !calendar)
+  console.warn(
+    "CALENDAR_ENABLED is true but Google credentials are missing; scheduling disabled.",
+  );
+
+// userId → display name, used to attribute appointments in the shared calendar.
+const userNames = new Map(cfg.users.map((u) => [u.id, u.name] as const));
+
 // --- Use cases (application) ---
 const indexPdf = new IndexPdf(extractor, chunker, embedder, vectorIndex, vault, repo, ocr, titler, tagger);
 const indexImage = new IndexImage(ocr, chunker, embedder, vectorIndex, repo, titler, tagger);
@@ -76,14 +101,24 @@ const deleteDocument = new DeleteDocument(repo, vectorIndex);
 let askQuestion: AskQuestion | null = null;
 if (cfg.deepseekApiKey) {
   const llm = new DeepseekLlm(cfg);
-  askQuestion = new AskQuestion(embedder, vectorIndex, llm, repo, sessions, notes);
+  askQuestion = new AskQuestion(
+    embedder,
+    vectorIndex,
+    llm,
+    repo,
+    sessions,
+    notes,
+    calendar,
+    userNames,
+    cfg.calendarTimeZone,
+  );
 }
 
 // Email ingestion is optional — only wired when EMAIL_ENABLED and Gmail creds
 // are present, mirroring how AskQuestion is optional.
 let ingestEmail: IngestEmail | null = null;
 if (cfg.emailEnabled) {
-  const auth = createGoogleAuth(cfg);
+  const auth = googleAuth ?? createGoogleAuth(cfg);
   const source = new GmailApiSource(auth, cfg.emailQueryDays);
   const processed = new SqliteProcessedEmails(db);
   const emailToUserId = new Map(

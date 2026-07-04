@@ -1,4 +1,12 @@
-import type { ConversationMessage, FileRecord, IncomingEmail, Note, SearchResult, Session } from "./types";
+import type {
+  CalendarEvent,
+  ConversationMessage,
+  FileRecord,
+  IncomingEmail,
+  Note,
+  SearchResult,
+  Session,
+} from "./types";
 
 // Ports = interfaces the domain/application need. Infrastructure implements them.
 // Dependencies point inward: use cases depend on these, never on concrete adapters.
@@ -179,4 +187,12 @@ export interface EmailSource {
 export interface ProcessedEmailLog {
   has(providerId: string): boolean;
   mark(providerId: string): void;
+}
+
+// Creates appointments on an external calendar. Implemented by
+// GoogleCalendarService. Optional — only wired when calendar is enabled.
+export interface CalendarService {
+  // Creates an event and returns its id + a link so the caller can confirm it
+  // to the user.
+  createEvent(event: CalendarEvent): Promise<{ id: string; htmlLink: string }>;
 }

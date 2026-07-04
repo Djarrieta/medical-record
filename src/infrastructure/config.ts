@@ -34,6 +34,12 @@ export interface BotConfig {
   gmailClientSecret?: string;
   gmailRefreshToken?: string;
   gmailUser?: string;
+  // Calendar scheduling (Google Calendar). Disabled by default; reuses the same
+  // Google OAuth credentials as email (the calendar.events scope is already in
+  // GOOGLE_SCOPES).
+  calendarEnabled: boolean;
+  calendarId: string;
+  calendarTimeZone: string;
 }
 
 export class Config {
@@ -61,6 +67,8 @@ export class Config {
     const emailPollSeconds = parseInt(process.env.EMAIL_POLL_SECONDS ?? "300", 10);
     const emailQueryDays = parseInt(process.env.EMAIL_QUERY_DAYS ?? "7", 10);
 
+    const calendarEnabled = (process.env.CALENDAR_ENABLED ?? "false").toLowerCase() === "true";
+
     this.botConfig = {
       botToken,
       users,
@@ -86,6 +94,9 @@ export class Config {
       gmailClientSecret: process.env.GMAIL_CLIENT_SECRET,
       gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN,
       gmailUser: process.env.GMAIL_USER,
+      calendarEnabled,
+      calendarId: process.env.GOOGLE_CALENDAR_ID ?? "primary",
+      calendarTimeZone: process.env.CALENDAR_TIMEZONE ?? "America/Bogota",
     };
   }
 }

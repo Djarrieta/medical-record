@@ -1,8 +1,17 @@
 import type { FileRecord } from "../domain/types";
-import type { DocumentRepository, Embedder, Llm, NoteRepository, SessionStore, Tool, VectorIndex } from "../domain/ports";
+import type {
+  CalendarService,
+  DocumentRepository,
+  Embedder,
+  Llm,
+  NoteRepository,
+  SessionStore,
+  Tool,
+  VectorIndex,
+} from "../domain/ports";
 
 const SYSTEM_PROMPT = `Eres un asistente médico que responde preguntas sobre los documentos clínicos del paciente.
-Tienes la herramienta "search_medical_records" para buscar fragmentos en los documentos indexados. Úsala SIEMPRE (una o varias veces, reformulando la búsqueda si hace falta) antes de responder.
+Tienes la herramienta "search_medical_records" para buscar fragmentos en los documentos indexados. Úsala SIEMPRE (una o varias veces, reformulando la búsqueda si hace falta) antes de responder preguntas sobre la historia clínica.
 Cada documento y nota tiene "tags": términos médicos (órganos o zonas del cuerpo, procedimientos o tipos de examen, especialidad) y, cuando existe, la fecha del documento en formato AAAA-MM-DD. Puedes filtrar la búsqueda pasando "tags" para acotar a documentos con esos términos (ej. tags ["orina"] para exámenes de orina). Usa la herramienta "list_available_tags" para ver qué tags existen antes de filtrar; si no estás seguro, busca sin filtro.
 IMPORTANTE: si filtras por "tags" y la búsqueda no devuelve coincidencias (o no son relevantes), VUELVE A BUSCAR sin el filtro de "tags" antes de concluir que no hay información. Las notas y documentos pueden no tener el tag que esperas; una búsqueda sin filtro abarca todo.
 Si después de buscar sin filtro "search_medical_records" sigue sin devolver resultados relevantes, usa "keyword_search" como último recurso: hace una búsqueda literal por palabras exactas (ej. "hijos") y encuentra fragmentos que la búsqueda semántica pasó por alto. Solo concluye que no hay información cuando también "keyword_search" falle.
@@ -33,6 +42,15 @@ export class AskQuestion {
     private readonly repo: DocumentRepository,
     private readonly sessions: SessionStore,
     private readonly notes: NoteRepository,
+    // Optional calendar scheduling. When present, the "schedule_appointment"
+    // tool is exposed so the patient can book appointments from chat. When null,
+    // the tool is not registered (graceful degradation).
+    private readonly calendar: CalendarService | null = null,
+    // userId → display name, used to attribute appointments in the shared
+    // calendar (e.g. "Diego: control cardiología").
+    private readonly userNames: Map<number, string> = new Map(),
+    // Time zone for interpreting/creating appointments (e.g. "America/Bogota").
+    private readonly timeZone: string = "America/Bogota",
   ) {}
 
   async run(question: string, userId: number): Promise<AskResult> {
@@ -212,13 +230,115 @@ export class AskQuestion {
       },
     };
 
+    const tools: Tool[] = [searchTool, keywordTool, sendTool, listTagsTool];
+
+    // Scheduling is optional: only exposed when a CalendarService is wired.
+    const userName = this.userNames.get(userId);
+    let systemPrompt = SYSTEM_PROMPT;
+    if (this.calendar) {
+      const calendar = this.calendar;
+      const timeZone = this.timeZone;
+
+      const scheduleTool: Tool = {
+        name: "schedule_appointment",
+        description:
+          "Crea una cita en el calendario del paciente. Úsala SOLO cuando el paciente pida " +
+          "explícitamente agendar, programar o crear una cita (ej. 'agenda una cita el 12 de julio a las 3pm'). " +
+          "No la uses para consultas sobre la historia clínica.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: {
+              type: "string",
+              description: "Título breve de la cita (ej. 'Control cardiología', 'Cita odontología').",
+            },
+            startIso: {
+              type: "string",
+              description:
+                "Fecha y hora de inicio en formato ISO 8601 con zona horaria " +
+                "(ej. 2026-07-12T15:00:00-05:00).",
+            },
+            endIso: {
+              type: "string",
+              description:
+                "Fecha y hora de fin en ISO 8601 (opcional; por defecto una hora después del inicio).",
+            },
+            description: {
+              type: "string",
+              description: "Detalle o notas opcionales de la cita.",
+            },
+          },
+          required: ["title", "startIso"],
+        },
+        execute: async (args) => {
+          const title = String(args.title ?? "").trim();
+          const startIso = String(args.startIso ?? "").trim();
+          if (!title || !startIso) {
+            return JSON.stringify({
+              scheduled: false,
+              note: "Falta el título o la fecha/hora de la cita.",
+            });
+          }
+          const start = new Date(startIso);
+          if (Number.isNaN(start.getTime())) {
+            return JSON.stringify({ scheduled: false, note: "La fecha u hora no es válida." });
+          }
+          if (start.getTime() < Date.now()) {
+            return JSON.stringify({
+              scheduled: false,
+              note: "La fecha está en el pasado; pide al paciente una fecha futura.",
+            });
+          }
+
+          // Default to a 1-hour appointment when no valid end is given.
+          let endIso = String(args.endIso ?? "").trim();
+          const end = endIso ? new Date(endIso) : null;
+          if (!end || Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+            endIso = new Date(start.getTime() + 60 * 60 * 1000).toISOString();
+          }
+
+          const description = String(args.description ?? "").trim() || undefined;
+          // Attribute the appointment to the patient in the shared calendar.
+          const summary = userName ? `${userName}: ${title}` : title;
+          try {
+            const { htmlLink } = await calendar.createEvent({
+              title: summary,
+              description,
+              startIso,
+              endIso,
+              timeZone,
+            });
+            return JSON.stringify({ scheduled: true, title: summary, startIso, htmlLink });
+          } catch (err) {
+            console.error("schedule_appointment failed:", err);
+            return JSON.stringify({
+              scheduled: false,
+              note: "No se pudo crear la cita en el calendario.",
+            });
+          }
+        },
+      };
+      tools.push(scheduleTool);
+
+      // Anchor "today" so the model can resolve relative dates, and give it the
+      // rules for building an appointment.
+      const nowLocal = new Date().toLocaleString("es-CO", { timeZone });
+      systemPrompt +=
+        `\n\nAGENDAR CITAS: tienes la herramienta "schedule_appointment" para crear citas en el ` +
+        `calendario del paciente. Úsala SOLO cuando el paciente pida explícitamente agendar o ` +
+        `programar una cita.\n` +
+        `- La fecha y hora actual es ${nowLocal} (zona horaria ${timeZone}). Resuelve fechas ` +
+        `relativas ("mañana", "el próximo lunes", "en dos semanas") respecto a esta fecha.\n` +
+        `- Convierte la fecha y hora a ISO 8601 con la zona ${timeZone} (ej. 2026-07-12T15:00:00-05:00) ` +
+        `y pásala en "startIso".\n` +
+        `- Si el paciente NO indica la hora, NO agendes: pregúntale primero a qué hora.\n` +
+        `- Si la fecha resultante está en el pasado, no agendes: pídele que confirme una fecha futura.\n` +
+        `- Tras agendar con éxito, confirma en una frase la fecha y hora de la cita.\n` +
+        `- No uses las herramientas de búsqueda de documentos para agendar: son cosas distintas.`;
+    }
+
     const history = this.sessions.history(userId);
-    const answer = await this.llm.answer(SYSTEM_PROMPT, history, question, [
-      searchTool,
-      keywordTool,
-      sendTool,
-      listTagsTool,
-    ]);
+    const answer = await this.llm.answer(systemPrompt, history, question, tools);
     const documents = Array.from(toSend.values());
 
     const now = new Date().toISOString();
