@@ -15,6 +15,8 @@
 | Deploy code change | `./deploy.sh` — `git pull` + `docker compose restart app` (no rebuild; `src/` & `web/dist/` are bind-mounted) |
 | Stop containers | `./stop.sh` — `sudo docker compose down` |
 | Reset all data | `./reset.sh` — stops containers, deletes DB/files/Qdrant/models, rebuilds |
+| Backup data | `./backup.sh [name]` — stops containers, tars `data/` (minus `models/`) into `../medical-record-snapshots/`, restarts |
+| Restore data | `./restore.sh <snapshot>` — stops containers, un-tars a snapshot back into `data/` (accepts a filename or unique prefix; no arg lists snapshots) |
 
 - **Web UI**: always starts on `http://<host>:<port>` (`WEB_PORT` defaults to `3000`) for drag-and-drop file upload (bypasses Telegram's 50MB limit). Password-protected if `WEB_PASSWORD` is set. The UI is a React SPA in `web/` built to `web/dist/` (committed); the Bun server in `src/infrastructure/web/webServer.ts` serves that static bundle + the JSON API.
 - **Building the web UI**: `bun run build:web` (runs `vite build` inside `web/`). The build is **never run on the server** — `web/dist/` is committed, so deploy is just `git pull` + restart. Rebuild + commit `web/dist/` whenever you change anything under `web/src/`.
@@ -36,20 +38,23 @@
 Lightweight Clean Architecture (ports & adapters). Dependencies point inward: `infrastructure → application → domain`.
 
 - **Single module** (not a monorepo). Entrypoint / composition root: `src/main.ts` — the only place that constructs concrete adapters and wires them into use cases.
-- **`src/domain/`** — pure core, no external deps. `types.ts` (`FileRecord`, `PendingPassword`, `Note`, `ChunkMetadata`, `SearchResult`) and `ports.ts` (interfaces: `DocumentRepository`, `TextExtractor`, `Chunker`, `Embedder`, `VectorIndex`, `PasswordVault`, `NoteRepository`, `Llm`).
-- **`src/application/`** — use cases that orchestrate domain + ports: `IndexPdf` (`indexPdf.ts`, the single PDF→split→embed→index pipeline, shared by bot and web), `IndexImage`, `IndexNote`/`DeleteNote` (text notes), `AskQuestion` (`askQuestion.ts`, RAG), `DeleteDocument` (`deleteDocument.ts`, removes file + vectors).
+- **`src/domain/`** — pure core, no external deps. `types.ts` (`FileRecord`, `PendingPassword`, `Note`, `ChunkMetadata`, `SearchResult`, `Session`, `ConversationMessage`, `IncomingEmail`, `EmailAttachment`) and `ports.ts` (interfaces: `DocumentRepository`, `TextExtractor`, `Ocr`, `Chunker`, `Embedder`, `VectorIndex`, `PasswordVault`, `NoteRepository`, `SessionStore`, `Titler`, `Tagger`, `Tool`, `Llm`, `EmailSource`, `ProcessedEmailLog`). Plus three pure, zero-dependency helper modules shared across layers: `fileType.ts` (magic-byte `isPdfBuffer`/`isImageBuffer` routing for `application/octet-stream` attachments), `tags.ts` (`normalizeTags` — lowercases, dedupes, ISO-normalizes dates, caps at `MAX_TAGS`), and `date.ts` (`toIsoDate` — canonicalizes dates to `YYYY-MM-DD`).
+- **`src/application/`** — use cases that orchestrate domain + ports: `IndexPdf` (`indexPdf.ts`, the single PDF→split→embed→index pipeline, shared by bot, web and email), `IndexImage` (`indexImage.ts`, OCR→split→embed→index), `IndexNote`/`UpdateNote`/`DeleteNote` (text notes), `AskQuestion` (`askQuestion.ts`, RAG), `DeleteDocument` (`deleteDocument.ts`, removes file + vectors), `IngestEmail` (`ingestEmail.ts`, the Gmail poll→attribute→ingest pipeline). Shared helpers: `embedAndIndex.ts` (chunk→embed→upsert, reused by every indexer), `safeGenerateTitle.ts`/`safeGenerateTags.ts` (best-effort LLM title/tags that never fail indexing).
 - **`src/infrastructure/`** — adapters implementing the ports (see below).
 - **Bot framework**: grammY v1 — `BotApp` class in `src/infrastructure/telegram/botApp.ts` (driver adapter; depends on use cases + `DocumentRepository`/`PasswordVault` ports).
-- **LLM**: LangChain `ChatOpenAI` via DeepSeek-compatible API — `DeepseekLlm` (implements `Llm`) in `src/infrastructure/llm/deepseekLlm.ts`.
+- **LLM**: LangChain `ChatOpenAI` via DeepSeek-compatible API — `DeepseekLlm` (implements `Llm`) in `src/infrastructure/llm/deepseekLlm.ts`. Two more DeepSeek-backed adapters live alongside it: `LlmTitler` (`llmTitler.ts`, implements `Titler`) and `LlmTagger` (`llmTagger.ts`, implements `Tagger`) — both optional, only constructed when `DEEPSEEK_API_KEY` is set, and used by the indexers to auto-name and auto-tag documents/notes.
 - **Shared SQLite**: all relational adapters share a single `bun:sqlite` database at `data/app.db` (WAL mode), opened once in `src/infrastructure/persistence/sqliteDatabase.ts` (`openAppDatabase`) and injected from `src/main.ts`. Each adapter still owns its own table(s) via `CREATE TABLE IF NOT EXISTS`.
 - **File storage**: `SqliteDocumentRepository` (implements `DocumentRepository`) in `src/infrastructure/persistence/sqliteDocumentRepository.ts` — saves files to `data/files/`, metadata in the shared `data/app.db` (`files` table). Takes the shared `Database` + `dataDir` in its constructor.
 - **PDF extraction**: `UnpdfTextExtractor` (implements `TextExtractor`) in `src/infrastructure/pdf/unpdfTextExtractor.ts` — uses `unpdf`.
+- **OCR**: `TesseractOcr` (implements `Ocr`) in `src/infrastructure/ocr/tesseractOcr.ts` — extracts text from images and scanned/image-only PDFs. `IndexPdf` falls back to OCR when `unpdf` yields no text; `IndexImage` uses it directly.
 - **Text splitting**: `RecursiveChunker` (implements `Chunker`) in `src/infrastructure/text/recursiveChunker.ts` — `RecursiveCharacterTextSplitter`, `chunkSize` 1000, `chunkOverlap` 200.
 - **Embeddings**: `TransformersEmbedder` (implements `Embedder`) in `src/infrastructure/embedding/transformersEmbedder.ts` — `@huggingface/transformers` pipeline (`Xenova/multilingual-e5-small`, 384-dim), model cached in `data/models/`. Uses E5 prefixes: `passage: ` for indexing, `query: ` for search. The Qdrant collection's vector size is derived from the model at startup (`embedder.dimensions()`, probed once in `initialize()`) and passed into `QdrantVectorIndex`, so model and index can never drift; changing the model still requires `./reset.sh` to recreate the collection at the new dimension.
 - **Vector DB**: `QdrantVectorIndex` (implements `VectorIndex`) in `src/infrastructure/vector/qdrantVectorIndex.ts` — Qdrant client, collection `documents`, Cosine distance.
 - **RAG**: `AskQuestion` use case in `src/application/askQuestion.ts` — retrieves top-5 chunks via `Embedder` + `VectorIndex`, answers via the `Llm` port. Prompt forces plain-text Spanish replies (no markdown).
 - **PDF passwords**: `SqlitePasswordVault` (implements `PasswordVault`) in `src/infrastructure/persistence/sqlitePasswordVault.ts` — remembers PDF passwords in the shared `data/app.db` (`passwords` table); tried automatically by `IndexPdf` on locked PDFs before prompting the user. Takes the shared `Database` in its constructor.
-- **Notes**: free-form text notes live in their own `notes` table (`SqliteNoteRepository`, shared `app.db`), separate from documents. `IndexNote` (`src/application/indexNote.ts`) saves the note then chunks→embeds→indexes it in Qdrant under the note id (so RAG retrieves it); `DeleteNote` removes note + vectors. Created via the bot's **Nota** button.
+- **Notes**: free-form text notes live in their own `notes` table (`SqliteNoteRepository`, shared `app.db`), separate from documents. `IndexNote` (`src/application/indexNote.ts`) saves the note then chunks→embeds→indexes it in Qdrant under the note id (so RAG retrieves it); `UpdateNote` re-indexes an edited note; `DeleteNote` removes note + vectors. Created via the bot's **Nota** button.
+- **Sessions**: `InMemorySessionStore` (implements `SessionStore`) in `src/infrastructure/session/sessionStore.ts` — one expiring session per user, backing both the multi-turn chat memory and the time-limited web upload token. Swept on an interval in `main.ts` (warn, then close on inactivity).
+- **Email ingestion (Gmail)**: three pieces, all optional (only wired when `EMAIL_ENABLED` + Gmail creds are present). `createGoogleAuth` (`src/infrastructure/google/googleAuth.ts`) builds an OAuth2 client from the `GMAIL_*` env vars. `GmailApiSource` (`src/infrastructure/email/gmailApiSource.ts`, implements `EmailSource`) reads recent messages from the shared mailbox via the Gmail API — **read-only** (never touches read state/labels): pages `messages.list` with `newer_than:<EMAIL_QUERY_DAYS>d`, decodes each message (From→address, subject, `text/plain` body or HTML→text, and every MIME attachment). `SqliteProcessedEmails` (implements `ProcessedEmailLog`) is a dedup log (`processed_emails` table). The `IngestEmail` use case ties them together — see the Email ingestion section below.
 - **Web server**: `src/infrastructure/web/webServer.ts` — Bun HTTP server that serves the built React SPA from `web/dist/` (static assets + `index.html` for the `/u/<userId>` entry route) and the JSON API (`/api/files`, `/api/notes`, `/upload`, tag PATCH, raw download); reuses the `IndexPdf`/`IndexImage`/`DeleteDocument`/`DeleteNote` use cases. Auth is per-request via `userId` + session `token` query params.
 - **Web frontend**: `web/` — Vite + React + TypeScript SPA (drag-and-drop upload, saved-files admin, notes, tag editing/filtering). Build with `bun run build:web`; output `web/dist/` is committed and served by the Bun server (no server-side build, keeping the 4GB/Core-i3 box light). `web/` has its own `package.json`/`tsconfig.json`, isolated from the backend.
 
@@ -82,9 +87,10 @@ The bot is **conversational, not command-driven** — `/start` is the only comma
 ## Data persistence
 
 - Single SQLite database at `./data/app.db` (WAL mode, auto-created) shared by all relational adapters.
-- Table: `files` (`SqliteDocumentRepository`) — id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256, title.
+- Table: `files` (`SqliteDocumentRepository`) — id, user_id, original_name, mime_type, size, path, created_at, indexed, sha256, tags.
 - Table: `passwords` (`SqlitePasswordVault`) — remembered PDF passwords.
-- Table: `notes` (`SqliteNoteRepository`) — id, user_id, title, text, created_at.
+- Table: `notes` (`SqliteNoteRepository`) — id, user_id, title, text, created_at, tags.
+- Table: `processed_emails` (`SqliteProcessedEmails`) — provider_id (Gmail message id, PK), processed_at; the poller's dedup log.
 - Files at `./data/files/<uuid>.<ext>`.
 - Qdrant vector index at `./data/qdrant/`.
 - Model cache at `./data/models/`.
@@ -96,5 +102,20 @@ The bot is **conversational, not command-driven** — `/start` is the only comma
 - **Shared pipelines live in use cases, not adapters.** PDF indexing is the `IndexPdf` use case (used by both bot and web) — do not re-implement extract→split→embed→index inline.
 - `TransformersEmbedder.initialize()` must be called before `embed()`/`embedQuery()` — happens once at startup in `src/main.ts`.
 - `AskQuestion` (RAG) is only constructed when `DEEPSEEK_API_KEY` is set; it's passed as `null` to `BotApp` otherwise, so guard for that in handlers.
+- Same optionality for the LLM titler/tagger (title/tags) and for email ingestion (`EMAIL_ENABLED` + Gmail creds) — all degrade gracefully when their config is absent.
 - Qdrant collection auto-created on first `ensureCollection()` call.
 - Signal handling in `main.ts`: SIGINT/SIGTERM stop the bot gracefully.
+
+## Email ingestion
+
+Optional Gmail poller that turns forwarded mail into the same records as a Telegram/web upload. Wired in `main.ts` only when `EMAIL_ENABLED=true` and the `GMAIL_*` creds are set; otherwise the app boots without it.
+
+- **Poller**: a self-rescheduling `setTimeout` (not `setInterval`) with an in-flight flag, so a slow cycle (Gmail fetch + OCR + LLM tagging) can never overlap the next run. Interval is `EMAIL_POLL_SECONDS` (default 300).
+- **Read step** (`GmailApiSource.fetchRecent`): lists every message id within `newer_than:<EMAIL_QUERY_DAYS>d` (default 7), then fetches each `format: full`. Read-only — it may return mail already ingested, so dedup is the caller's job.
+- **Ingest step** (`IngestEmail.run`), per email:
+  1. **Attribution** — `email.from` is matched against the `USERS` registry (`email` → `userId`, lowercased/trimmed). Unregistered senders are ignored silently.
+  2. **Dedup** — skip if `ProcessedEmailLog.has(providerId)`.
+  3. **Body → Note** — non-empty body is saved via `IndexNote` (`subject + body`), so RAG can retrieve it.
+  4. **Attachments → routed like uploads** — content-deduped via `repo.findByContent`; routed by MIME with a magic-bytes fallback (email attachments are often `application/octet-stream`): PDF → `IndexPdf`, image → `IndexImage`, anything else → stored only.
+  5. **Mark** — `ProcessedEmailLog.mark(providerId)` runs **only after the whole email succeeds**, so a crash mid-email lets the next poll retry it (idempotent).
+- **Setup**: `scripts/google-auth.ts` performs the one-time OAuth consent to mint `GMAIL_REFRESH_TOKEN`. The shared mailbox is `GMAIL_USER`.
