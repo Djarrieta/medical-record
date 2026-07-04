@@ -41,6 +41,16 @@ export interface Tagger {
   generate(text: string): Promise<string[]>;
 }
 
+// Triage + rewrite for forwarded emails. Decides whether an email's body is
+// worth keeping as a note and, if so, rewrites it into a short, clear Spanish
+// summary the user can consult later (e.g. "Cita confirmada para el 12 mar",
+// "Cita cancelada", "Resultados disponibles"). Returns null when the email
+// carries no useful information (marketing, newsletters, automated noise), so
+// the caller skips saving it.
+export interface EmailNoteSummarizer {
+  summarize(subject: string, body: string): Promise<string | null>;
+}
+
 export interface TextExtractor {
   tryExtract(buffer: Buffer, password?: string): Promise<string | null>;
 }

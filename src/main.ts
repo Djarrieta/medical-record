@@ -15,6 +15,7 @@ import { RecursiveChunker } from "./infrastructure/text/recursiveChunker";
 import { DeepseekLlm } from "./infrastructure/llm/deepseekLlm";
 import { LlmTitler } from "./infrastructure/llm/llmTitler";
 import { LlmTagger } from "./infrastructure/llm/llmTagger";
+import { LlmEmailSummarizer } from "./infrastructure/llm/llmEmailSummarizer";
 import { InMemorySessionStore } from "./infrastructure/session/sessionStore";
 import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
@@ -89,7 +90,18 @@ if (cfg.emailEnabled) {
       .filter((u) => u.email)
       .map((u) => [u.email!.toLowerCase().trim(), u.id] as const),
   );
-  ingestEmail = new IngestEmail(source, emailToUserId, processed, repo, indexNote, indexPdf, indexImage);
+  // Optional LLM triage: only save clear, useful email bodies as notes.
+  const summarizer = cfg.deepseekApiKey ? new LlmEmailSummarizer(cfg) : null;
+  ingestEmail = new IngestEmail(
+    source,
+    emailToUserId,
+    processed,
+    repo,
+    indexNote,
+    indexPdf,
+    indexImage,
+    summarizer,
+  );
 }
 
 // --- Driver adapters ---

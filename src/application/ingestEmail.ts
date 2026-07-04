@@ -1,4 +1,4 @@
-import type { DocumentRepository, EmailSource, ProcessedEmailLog } from "../domain/ports";
+import type { DocumentRepository, EmailNoteSummarizer, EmailSource, ProcessedEmailLog } from "../domain/ports";
 import { isImageBuffer, isPdfBuffer } from "../domain/fileType";
 import type { IndexImage } from "./indexImage";
 import type { IndexNote } from "./indexNote";
@@ -12,10 +12,12 @@ export interface IngestEmailResult {
 }
 
 // Use case: poll the shared mailbox and ingest every email forwarded from a
-// registered user's address. The body becomes a Note (RAG-searchable) and each
-// attachment is routed exactly like a Telegram upload (PDF → IndexPdf, image →
-// IndexImage, other → store only). Attribution is the user-registry email match
-// only (the USERS env var); unmatched senders are ignored silently.
+// registered user's address. The body is first triaged/summarized by the LLM
+// (EmailNoteSummarizer): only emails carrying useful health information become a
+// Note (RAG-searchable), rewritten into a short clear summary; noise is dropped.
+// Each attachment is routed exactly like a Telegram upload (PDF → IndexPdf,
+// image → IndexImage, other → store only). Attribution is the user-registry
+// email match only (the USERS env var); unmatched senders are ignored silently.
 // Dedup is by Gmail providerId.
 export class IngestEmail {
   constructor(
@@ -28,6 +30,10 @@ export class IngestEmail {
     private readonly indexNote: IndexNote,
     private readonly indexPdf: IndexPdf,
     private readonly indexImage: IndexImage,
+    // Optional LLM triage. When absent (no LLM configured) the raw body is saved
+    // as before; when present it decides whether the body is worth saving and,
+    // if so, rewrites it into a concise summary.
+    private readonly summarizer: EmailNoteSummarizer | null = null,
   ) {}
 
   async run(): Promise<IngestEmailResult> {
@@ -41,14 +47,21 @@ export class IngestEmail {
       if (this.processed.has(email.providerId)) continue; // already ingested
 
       try {
-        // Body → Note (reuses the title fallback + tags + RAG pipeline).
+        // Body → Note, but only when it carries useful health information.
+        // The LLM triages and rewrites it into a short, clear summary; noise is
+        // dropped (no note). Without an LLM, the raw body is saved as before.
         const body = email.body.trim();
         if (body.length > 0) {
-          await this.indexNote.run({
-            text: `${email.subject}\n\n${email.body}`,
-            userId,
-            title: email.subject,
-          });
+          const noteText = this.summarizer
+            ? await this.summarizer.summarize(email.subject, body)
+            : `${email.subject}\n\n${email.body}`;
+          if (noteText) {
+            await this.indexNote.run({
+              text: noteText,
+              userId,
+              title: email.subject,
+            });
+          }
         }
 
         // Attachments → routed like Telegram uploads, with content dedup.
