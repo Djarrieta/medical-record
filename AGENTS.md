@@ -11,8 +11,7 @@
 |---|---|
 | Start bot | `bun start` (runs `src/main.ts`) |
 | Typecheck | `bun run typeCheck` (`bunx tsc --noEmit`) |
-| Start containers | `./start.sh` — `git pull` + `sudo docker compose up -d --build` (full image rebuild) |
-| Deploy code change | `./deploy.sh` — `git pull` + `docker compose restart app` (no rebuild; `src/` & `web/dist/` are bind-mounted) |
+| Start / deploy containers | `./start.sh` — `git pull` + `sudo docker compose up -d --build` (full image rebuild) |
 | Stop containers | `./stop.sh` — `sudo docker compose down` |
 | Reset all data | `./reset.sh` — stops containers, deletes DB/files/Qdrant/models, rebuilds |
 | Backup data | `./backup.sh [name]` — stops containers, tars `data/` (minus `models/`) into `../medical-record-snapshots/`, restarts |
@@ -66,7 +65,7 @@ Lightweight Clean Architecture (ports & adapters). Dependencies point inward: `i
 - **Two containers**: `app` (bot) + `qdrant` (vector DB, port 6333).
 - Qdrant is a required dependency — the bot won't start without it.
 - `docker-compose.yml` mounts `./data` into both containers (bot uses `data/files`, `data/models`, `data/app.db`; Qdrant uses `data/qdrant/`).
-- **No build step for the backend.** Bun runs TypeScript directly, so `src/` and `web/dist/` are bind-mounted into the `app` container. Code-only deploys are `./deploy.sh` (`git pull` + `docker compose restart app`, seconds, no image rebuild). A full `./start.sh --build` is only needed when dependencies (`package.json` / `bun.lock`) or the `Dockerfile` change — or the first time after the compose volumes change. `node_modules` stays baked in the image (not mounted).
+- **No build step for the backend.** Bun runs TypeScript directly, so `src/` and `web/dist/` are bind-mounted into the `app` container. Deploys always go through `./start.sh` (`git pull` + `docker compose up -d --build`), which rebuilds the image and restarts. `node_modules` stays baked in the image (not mounted).
 - `TZ=America/Bogota` in Dockerfile.
 
 ## Telegram bot behavior
