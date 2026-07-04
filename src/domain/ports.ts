@@ -55,6 +55,13 @@ export interface TextExtractor {
   tryExtract(buffer: Buffer, password?: string): Promise<string | null>;
 }
 
+// Expands an archive (zip) into its contained files. Returns a flat list of
+// entries (directories and empty entries skipped). Used to route the files
+// inside a forwarded zip through the normal upload pipeline.
+export interface ArchiveExtractor {
+  extract(buffer: Buffer): Promise<{ filename: string; content: Buffer }[]>;
+}
+
 export interface Chunker {
   split(text: string): Promise<string[]>;
 }

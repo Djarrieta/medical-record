@@ -47,3 +47,18 @@ export function isImageBuffer(buffer: Buffer): boolean {
 
   return false;
 }
+
+// Detects a ZIP archive by its local-file-header magic bytes. Covers the two
+// benign empty-archive markers too ("PK\x05\x06" end-of-central-directory and
+// "PK\x07\x08" spanned) so an empty zip is still recognised as a zip.
+export function isZipBuffer(buffer: Buffer): boolean {
+  if (buffer.length < 4) return false;
+  if (buffer[0] !== 0x50 || buffer[1] !== 0x4b) return false; // "PK"
+  const c = buffer[2];
+  const d = buffer[3];
+  return (
+    (c === 0x03 && d === 0x04) || // normal archive
+    (c === 0x05 && d === 0x06) || // empty archive
+    (c === 0x07 && d === 0x08) // spanned archive
+  );
+}

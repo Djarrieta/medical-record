@@ -1,5 +1,12 @@
-import type { DocumentRepository, EmailNoteSummarizer, EmailSource, ProcessedEmailLog } from "../domain/ports";
-import { isImageBuffer, isPdfBuffer } from "../domain/fileType";
+import type {
+  ArchiveExtractor,
+  DocumentRepository,
+  EmailNoteSummarizer,
+  EmailSource,
+  ProcessedEmailLog,
+} from "../domain/ports";
+import type { EmailAttachment } from "../domain/types";
+import { isImageBuffer, isPdfBuffer, isZipBuffer } from "../domain/fileType";
 import type { IndexImage } from "./indexImage";
 import type { IndexNote } from "./indexNote";
 import type { IndexPdf } from "./indexPdf";
@@ -15,10 +22,12 @@ export interface IngestEmailResult {
 // registered user's address. The body is first triaged/summarized by the LLM
 // (EmailNoteSummarizer): only emails carrying useful health information become a
 // Note (RAG-searchable), rewritten into a short clear summary; noise is dropped.
-// Each attachment is routed exactly like a Telegram upload (PDF → IndexPdf,
-// image → IndexImage, other → store only). Attribution is the user-registry
-// email match only (the USERS env var); unmatched senders are ignored silently.
-// Dedup is by Gmail providerId.
+// Each attachment is routed exactly like a Telegram upload, but ONLY indexable
+// files are kept: PDF → IndexPdf, image → IndexImage. Anything that cannot be
+// indexed is dropped (never archived as dead weight). Zip attachments are
+// expanded first and their inner files routed the same way. Attribution is the
+// user-registry email match only (the USERS env var); unmatched senders are
+// ignored silently. Dedup is by Gmail providerId.
 export class IngestEmail {
   constructor(
     private readonly source: EmailSource,
@@ -30,6 +39,9 @@ export class IngestEmail {
     private readonly indexNote: IndexNote,
     private readonly indexPdf: IndexPdf,
     private readonly indexImage: IndexImage,
+    // Expands zip attachments into their contained files so each can be routed
+    // through the normal PDF/image pipeline.
+    private readonly archive: ArchiveExtractor,
     // Optional LLM triage. When absent (no LLM configured) the raw body is saved
     // as before; when present it decides whether the body is worth saving and,
     // if so, rewrites it into a concise summary.
@@ -64,18 +76,28 @@ export class IngestEmail {
           }
         }
 
-        // Attachments → routed like Telegram uploads, with content dedup.
-        for (const att of email.attachments) {
-          const existing = this.repo.findByContent(att.content, userId);
-          const rec =
-            existing ??
-            (await this.repo.save(userId, att.filename, att.mimeType, att.content));
-
+        // Attachments → expand zips, then route like Telegram uploads. Only
+        // indexable files (PDF/image) are saved; the rest are dropped.
+        const candidates = await this.expandAttachments(email.attachments);
+        for (const att of candidates) {
           // Route by MIME, falling back to magic bytes when the client sent a
           // generic type (email attachments are often application/octet-stream),
           // mirroring the Telegram/web upload paths.
           const isPdf = att.mimeType === "application/pdf" || isPdfBuffer(att.content);
           const isImage = att.mimeType.startsWith("image/") || isImageBuffer(att.content);
+
+          if (!isPdf && !isImage) {
+            // Not indexable → not stored. Better to drop it than to archive a
+            // file we can never search.
+            result.others += 1;
+            continue;
+          }
+
+          // Only now do we persist it (content-deduped).
+          const existing = this.repo.findByContent(att.content, userId);
+          const rec =
+            existing ??
+            (await this.repo.save(userId, att.filename, att.mimeType, att.content));
 
           if (isPdf) {
             await this.indexPdf.run({
@@ -85,7 +107,7 @@ export class IngestEmail {
               userId,
             });
             result.pdfs += 1;
-          } else if (isImage) {
+          } else {
             await this.indexImage.run({
               buffer: att.content,
               fileId: rec.id,
@@ -93,9 +115,6 @@ export class IngestEmail {
               userId,
             });
             result.images += 1;
-          } else {
-            // Stored only (the save above); not indexed.
-            result.others += 1;
           }
         }
 
@@ -109,5 +128,41 @@ export class IngestEmail {
     }
 
     return result;
+  }
+
+  // Flattens attachments, expanding zip archives into their contained files so
+  // each inner PDF/image can be routed through the normal pipeline. Non-zip
+  // attachments pass through unchanged. A zip that fails to open is skipped
+  // (logged), so one bad archive never aborts the whole email.
+  private async expandAttachments(
+    attachments: EmailAttachment[],
+  ): Promise<EmailAttachment[]> {
+    const out: EmailAttachment[] = [];
+    for (const att of attachments) {
+      const isZip =
+        att.mimeType === "application/zip" ||
+        att.mimeType === "application/x-zip-compressed" ||
+        isZipBuffer(att.content);
+
+      if (!isZip) {
+        out.push(att);
+        continue;
+      }
+
+      try {
+        const entries = await this.archive.extract(att.content);
+        for (const entry of entries) {
+          out.push({
+            filename: entry.filename,
+            // Let the magic-byte routing decide the real type of each entry.
+            mimeType: "application/octet-stream",
+            content: entry.content,
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to open zip attachment ${att.filename}:`, err);
+      }
+    }
+    return out;
   }
 }

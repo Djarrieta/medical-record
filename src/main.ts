@@ -21,6 +21,7 @@ import { BotApp } from "./infrastructure/telegram/botApp";
 import { startWebServer } from "./infrastructure/web/webServer";
 import { createGoogleAuth } from "./infrastructure/google/googleAuth";
 import { GmailApiSource } from "./infrastructure/email/gmailApiSource";
+import { AdmZipExtractor } from "./infrastructure/archive/admZipExtractor";
 
 import { IndexPdf } from "./application/indexPdf";
 import { IndexImage } from "./application/indexImage";
@@ -92,6 +93,7 @@ if (cfg.emailEnabled) {
   );
   // Optional LLM triage: only save clear, useful email bodies as notes.
   const summarizer = cfg.deepseekApiKey ? new LlmEmailSummarizer(cfg) : null;
+  const archive = new AdmZipExtractor();
   ingestEmail = new IngestEmail(
     source,
     emailToUserId,
@@ -100,6 +102,7 @@ if (cfg.emailEnabled) {
     indexNote,
     indexPdf,
     indexImage,
+    archive,
     summarizer,
   );
 }
