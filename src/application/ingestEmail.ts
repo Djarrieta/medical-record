@@ -1,5 +1,6 @@
 import type {
   ArchiveExtractor,
+  CalendarService,
   DocumentRepository,
   EmailNoteSummarizer,
   EmailSource,
@@ -7,6 +8,7 @@ import type {
 } from "../domain/ports";
 import type { EmailAttachment } from "../domain/types";
 import { isImageBuffer, isPdfBuffer, isZipBuffer } from "../domain/fileType";
+import { isIcsBuffer, parseIcsEvents } from "../domain/icalendar";
 import type { IndexImage } from "./indexImage";
 import type { IndexNote } from "./indexNote";
 import type { IndexPdf } from "./indexPdf";
@@ -15,6 +17,7 @@ export interface IngestEmailResult {
   emails: number;
   pdfs: number;
   images: number;
+  events: number;
   others: number;
 }
 
@@ -46,10 +49,21 @@ export class IngestEmail {
     // as before; when present it decides whether the body is worth saving and,
     // if so, rewrites it into a concise summary.
     private readonly summarizer: EmailNoteSummarizer | null = null,
+    // Optional calendar. When present, .ics attachments (appointment invites)
+    // are turned into calendar events instead of being stored/indexed. When
+    // null, .ics attachments are simply dropped like any other non-indexable
+    // file.
+    private readonly calendar: CalendarService | null = null,
+    // userId → display name, used to prefix events created in the shared
+    // calendar (e.g. "Dario: Cita cardiología").
+    private readonly userNames: Map<number, string> = new Map(),
+    // Time zone used to interpret floating/all-day .ics times and to display
+    // UTC ones (e.g. "America/Bogota").
+    private readonly timeZone: string = "America/Bogota",
   ) {}
 
   async run(): Promise<IngestEmailResult> {
-    const result: IngestEmailResult = { emails: 0, pdfs: 0, images: 0, others: 0 };
+    const result: IngestEmailResult = { emails: 0, pdfs: 0, images: 0, events: 0, others: 0 };
 
     const incoming = await this.source.fetchRecent();
 
@@ -80,6 +94,14 @@ export class IngestEmail {
         // indexable files (PDF/image) are saved; the rest are dropped.
         const candidates = await this.expandAttachments(email.attachments);
         for (const att of candidates) {
+          // Appointment invites (.ics) → create a calendar event, never store or
+          // index them. Detect by MIME/filename with a content fallback (the
+          // client often sends text/calendar, application/ics or octet-stream).
+          if (this.isIcs(att)) {
+            result.events += await this.scheduleFromIcs(att, userId, email.subject);
+            continue;
+          }
+
           // Route by MIME, falling back to magic bytes when the client sent a
           // generic type (email attachments are often application/octet-stream),
           // mirroring the Telegram/web upload paths.
@@ -128,6 +150,52 @@ export class IngestEmail {
     }
 
     return result;
+  }
+
+  // Is this attachment an iCalendar appointment invite? Checks MIME and the
+  // ".ics" extension, then falls back to sniffing the content (clients often
+  // send text/calendar, application/ics, or a generic octet-stream).
+  private isIcs(att: EmailAttachment): boolean {
+    const mime = att.mimeType.toLowerCase();
+    return (
+      mime.startsWith("text/calendar") ||
+      mime === "application/ics" ||
+      att.filename.toLowerCase().endsWith(".ics") ||
+      isIcsBuffer(att.content)
+    );
+  }
+
+  // Turns an .ics attachment into calendar events. The file itself is never
+  // stored or indexed. Returns how many events were created (0 when calendar is
+  // disabled or the invite has no usable/non-cancelled event). Failures are
+  // logged and swallowed so one bad invite never aborts the email.
+  private async scheduleFromIcs(
+    att: EmailAttachment,
+    userId: number,
+    subject: string,
+  ): Promise<number> {
+    if (!this.calendar) return 0; // calendar disabled → just drop the .ics
+
+    let created = 0;
+    try {
+      const events = parseIcsEvents(att.content.toString("utf8"), this.timeZone);
+      const userName = this.userNames.get(userId);
+      for (const ev of events) {
+        const base = ev.title.trim() || subject.trim() || "Cita";
+        const title = userName ? `${userName}: ${base}` : base;
+        await this.calendar.createEvent({
+          title,
+          description: ev.description,
+          startIso: ev.startIso,
+          endIso: ev.endIso,
+          timeZone: ev.timeZone,
+        });
+        created += 1;
+      }
+    } catch (err) {
+      console.error(`Failed to create calendar event from ${att.filename}:`, err);
+    }
+    return created;
   }
 
   // Flattens attachments, expanding zip archives into their contained files so

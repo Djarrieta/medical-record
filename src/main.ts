@@ -139,6 +139,9 @@ if (cfg.emailEnabled) {
     indexImage,
     archive,
     summarizer,
+    calendar,
+    userNames,
+    cfg.calendarTimeZone,
   );
 }
 
@@ -196,7 +199,7 @@ if (ingestEmail) {
       const r = await job.run();
       if (r.emails > 0)
         console.log(
-          `Email poll: ${r.emails} emails, ${r.pdfs} PDFs, ${r.images} images, ${r.others} others.`,
+          `Email poll: ${r.emails} emails, ${r.pdfs} PDFs, ${r.images} images, ${r.events} events, ${r.others} others.`,
         );
     } catch (err) {
       console.error("Email poll failed:", err);
