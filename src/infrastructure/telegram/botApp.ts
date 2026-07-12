@@ -8,6 +8,7 @@ import type {
   NoteRepository,
   PasswordVault,
   SessionStore,
+  Transcriber,
 } from "../../domain/ports";
 import type { IndexPdf } from "../../application/indexPdf";
 import type { IndexImage } from "../../application/indexImage";
@@ -31,6 +32,7 @@ export class BotApp {
   private deleteNote: DeleteNote;
   private notes: NoteRepository;
   private askQuestion: AskQuestion | null;
+  private transcriber: Transcriber | null;
   private vault: PasswordVault;
   private sessions: SessionStore;
   private pendingPasswords: Map<number, PendingPassword>;
@@ -51,6 +53,7 @@ export class BotApp {
     askQuestion: AskQuestion | null,
     vault: PasswordVault,
     sessions: SessionStore,
+    transcriber: Transcriber | null,
   ) {
     this.config = config;
     this.repo = repo;
@@ -62,6 +65,7 @@ export class BotApp {
     this.askQuestion = askQuestion;
     this.vault = vault;
     this.sessions = sessions;
+    this.transcriber = transcriber;
     this.pendingPasswords = new Map();
     this.pendingPasswordAdd = new Set();
     this.pendingNote = new Set();
@@ -327,6 +331,79 @@ export class BotApp {
       } catch (error) {
         await ctx.reply("❌ Error al guardar la foto");
         console.error("Photo save error:", error);
+      }
+    });
+
+    this.bot.on(":voice", async (ctx) => {
+      try {
+        if (!this.transcriber) {
+          await ctx.reply("❌ Transcripción de audio no configurada.");
+          return;
+        }
+        if (!this.askQuestion) {
+          await ctx.reply("❌ El sistema de análisis no está disponible.");
+          return;
+        }
+
+        const voice = ctx.message!.voice!;
+        const buffer = await this.downloadFile(ctx);
+
+        await ctx.reply("🎤 Transcribiendo...");
+        const text = await this.transcriber.transcribe(buffer, voice.mime_type);
+
+        if (!text) {
+          await ctx.reply("⚠️ No se pudo transcribir el audio.");
+          return;
+        }
+
+        await ctx.reply(`📝 *Transcripción:* ${escapeHtml(text)}`, { parse_mode: "HTML" });
+
+        await ctx.reply("🔍 Analizando...");
+        const { answer, documents } = await this.askQuestion.run(text, ctx.from!.id);
+        await ctx.reply(answer);
+        for (const doc of documents) {
+          await ctx.replyWithDocument(new InputFile(doc.path, doc.originalName));
+        }
+      } catch (error) {
+        await ctx.reply("❌ Error al procesar el audio.");
+        console.error("Voice error:", error);
+      }
+    });
+
+    this.bot.on(":audio", async (ctx) => {
+      try {
+        if (!this.transcriber) {
+          await ctx.reply("❌ Transcripción de audio no configurada.");
+          return;
+        }
+        if (!this.askQuestion) {
+          await ctx.reply("❌ El sistema de análisis no está disponible.");
+          return;
+        }
+
+        const audio = ctx.message!.audio!;
+        const buffer = await this.downloadFile(ctx);
+
+        await ctx.reply("🎤 Transcribiendo...");
+        const mimeType = audio.mime_type ?? "audio/ogg";
+        const text = await this.transcriber.transcribe(buffer, mimeType);
+
+        if (!text) {
+          await ctx.reply("⚠️ No se pudo transcribir el audio.");
+          return;
+        }
+
+        await ctx.reply(`📝 *Transcripción:* ${escapeHtml(text)}`, { parse_mode: "HTML" });
+
+        await ctx.reply("🔍 Analizando...");
+        const { answer, documents } = await this.askQuestion.run(text, ctx.from!.id);
+        await ctx.reply(answer);
+        for (const doc of documents) {
+          await ctx.replyWithDocument(new InputFile(doc.path, doc.originalName));
+        }
+      } catch (error) {
+        await ctx.reply("❌ Error al procesar el audio.");
+        console.error("Audio error:", error);
       }
     });
 

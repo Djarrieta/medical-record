@@ -5,6 +5,7 @@ services:
     env_file: .env
     environment:
       - QDRANT_URL=http://qdrant:6333
+      - WHISPER_URL=http://whisper:9000
       - WEB_PORT=3000
     ports:
       - "3000:3000"
@@ -19,6 +20,18 @@ services:
     depends_on:
       qdrant:
         condition: service_healthy
+      whisper:
+        condition: service_started
+    restart: unless-stopped
+
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: medical-record-whisper
+    environment:
+      - ASR_MODEL=small
+      - ASR_ENGINE=faster_whisper
+    volumes:
+      - ./data/whisper-cache:/root/.cache/
     restart: unless-stopped
 
   qdrant:
