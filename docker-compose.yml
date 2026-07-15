@@ -5,33 +5,20 @@ services:
     env_file: .env
     environment:
       - QDRANT_URL=http://qdrant:6333
-      - WHISPER_URL=http://whisper:9000
+      - WHISPER_URL=http://whisper-service:9000
       - WEB_PORT=3000
     ports:
       - "3000:3000"
     volumes:
       - ./data:/app/data
-      # Bun runs TypeScript directly, so the app needs no build step. Bind-mount
-      # the source + built SPA so code deploys are a `restart` (seconds), not an
-      # image rebuild. node_modules stays baked in the image (not mounted), so a
-      # full `--build` is only needed when dependencies or the Dockerfile change.
       - ./src:/app/src
       - ./web/dist:/app/web/dist
     depends_on:
       qdrant:
         condition: service_healthy
-      whisper:
-        condition: service_started
-    restart: unless-stopped
-
-  whisper:
-    image: onerahmet/openai-whisper-asr-webservice:latest
-    container_name: medical-record-whisper
-    environment:
-      - ASR_MODEL=small
-      - ASR_ENGINE=faster_whisper
-    volumes:
-      - ./data/whisper-cache:/root/.cache/
+    networks:
+      - default
+      - shared-services
     restart: unless-stopped
 
   qdrant:
@@ -46,3 +33,7 @@ services:
       interval: 5s
       retries: 5
     restart: unless-stopped
+
+networks:
+  shared-services:
+    external: true
