@@ -1,28 +1,19 @@
 import { type BaseMessage, AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
-import { ChatOpenAI } from "@langchain/openai";
+import type { ChatOpenAI } from "@langchain/openai";
 
 import type { Llm, Tool } from "../../domain/ports";
 import type { ConversationMessage } from "../../domain/types";
 import type { BotConfig } from "../config";
+import { createChatModel } from "./chatModel";
 
 // Safety cap on the agentic loop so a misbehaving model can't spin forever.
 const MAX_STEPS = 8;
 
-export class DeepseekLlm implements Llm {
+export class ChatLlm implements Llm {
   private readonly model: ChatOpenAI;
 
   constructor(config: BotConfig) {
-    if (!config.deepseekApiKey) {
-      throw new Error("DEEPSEEK_API_KEY is required to initialize DeepseekLlm");
-    }
-    this.model = new ChatOpenAI({
-      model: config.deepseekModel,
-      temperature: 0.2,
-      apiKey: config.deepseekApiKey,
-      configuration: {
-        baseURL: config.deepseekBaseUrl,
-      },
-    });
+    this.model = createChatModel(config);
   }
 
   async answer(

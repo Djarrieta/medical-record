@@ -1,8 +1,9 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { ChatOpenAI } from "@langchain/openai";
+import type { ChatOpenAI } from "@langchain/openai";
 
 import type { Titler } from "../../domain/ports";
 import type { BotConfig } from "../config";
+import { createChatModel } from "./chatModel";
 
 // Only feed the model the start of the document — a title only needs the header
 // (type of document, patient/issuer, date), and this keeps the call cheap.
@@ -17,21 +18,13 @@ const SYSTEM_PROMPT =
   "(ej. 'Hemograma — Lab. Clínico, 12 mar 2024'). " +
   "Omite las partes que no aparezcan en el texto. Máximo 60 caracteres.";
 
-// Generates a short title from a document's text via the DeepSeek-compatible
-// chat API. A single non-agentic completion — no tools, low temperature.
+// Generates a short title from a document's text. A single non-agentic
+// completion — no tools, low temperature.
 export class LlmTitler implements Titler {
   private readonly model: ChatOpenAI;
 
   constructor(config: BotConfig) {
-    if (!config.deepseekApiKey) {
-      throw new Error("DEEPSEEK_API_KEY is required to initialize LlmTitler");
-    }
-    this.model = new ChatOpenAI({
-      model: config.deepseekModel,
-      temperature: 0.2,
-      apiKey: config.deepseekApiKey,
-      configuration: { baseURL: config.deepseekBaseUrl },
-    });
+    this.model = createChatModel(config);
   }
 
   async generate(text: string, originalName: string): Promise<string | null> {

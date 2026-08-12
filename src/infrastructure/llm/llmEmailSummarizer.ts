@@ -1,8 +1,9 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { ChatOpenAI } from "@langchain/openai";
+import type { ChatOpenAI } from "@langchain/openai";
 
 import type { EmailNoteSummarizer } from "../../domain/ports";
 import type { BotConfig } from "../config";
+import { createChatModel } from "./chatModel";
 
 // Emails can be long (quoted threads, signatures, footers); cap the input so a
 // single triage call stays cheap. The useful signal is almost always near the top.
@@ -20,21 +21,13 @@ const SYSTEM_PROMPT =
   `Si el correo NO aporta información útil (publicidad, boletines, promociones, notificaciones automáticas sin valor), responde EXACTAMENTE con la palabra ${SKIP_TOKEN}. ` +
   "No inventes datos que no estén en el correo. Responde en texto plano, sin markdown ni prefijos.";
 
-// Uses the DeepSeek-compatible chat API to triage a forwarded email and rewrite
-// its body into a short, clear note. A single non-agentic completion, low temperature.
+// Triages a forwarded email and rewrites its body into a short, clear note.
+// A single non-agentic completion, low temperature.
 export class LlmEmailSummarizer implements EmailNoteSummarizer {
   private readonly model: ChatOpenAI;
 
   constructor(config: BotConfig) {
-    if (!config.deepseekApiKey) {
-      throw new Error("DEEPSEEK_API_KEY is required to initialize LlmEmailSummarizer");
-    }
-    this.model = new ChatOpenAI({
-      model: config.deepseekModel,
-      temperature: 0.2,
-      apiKey: config.deepseekApiKey,
-      configuration: { baseURL: config.deepseekBaseUrl },
-    });
+    this.model = createChatModel(config);
   }
 
   async summarize(subject: string, body: string): Promise<string | null> {

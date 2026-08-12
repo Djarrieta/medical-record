@@ -11,9 +11,9 @@ export interface BotConfig {
   botToken: string;
   users: UserRecord[];
   allowedUserIds: number[];
-  deepseekApiKey?: string;
-  deepseekModel: string;
-  deepseekBaseUrl: string;
+  llmApiKey?: string;
+  llmModel: string;
+  llmBaseUrl: string;
   dataDir: string;
   qdrantUrl: string;
   embeddingModel: string;
@@ -73,9 +73,9 @@ export class Config {
       botToken,
       users,
       allowedUserIds,
-      deepseekApiKey: process.env.DEEPSEEK_API_KEY,
-      deepseekModel: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
-      deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+      llmApiKey: process.env.LLM_API_KEY,
+      llmModel: process.env.LLM_MODEL ?? "openai/gpt-4o",
+      llmBaseUrl: process.env.LLM_BASE_URL ?? "https://openrouter.ai/api/v1",
       dataDir: process.env.DATA_DIR ?? "./data",
       qdrantUrl: process.env.QDRANT_URL ?? "http://localhost:6333",
       embeddingModel: process.env.EMBEDDING_MODEL ?? "Xenova/multilingual-e5-small",

@@ -1,12 +1,12 @@
 # medical-records-2
 
-Telegram bot que guarda, indexa y responde preguntas sobre documentos médicos usando IA. Construido con Bun, grammY, Qdrant, LangChain y DeepSeek.
+Telegram bot que guarda, indexa y responde preguntas sobre documentos médicos usando IA. Construido con Bun, grammY, Qdrant, LangChain y OpenRouter.
 
 ## Setup
 
 ```bash
 cp .env.example .env
-# llena BOT_TOKEN, DEEPSEEK_API_KEY, QDRANT_URL
+# llena BOT_TOKEN, LLM_API_KEY, QDRANT_URL
 # y los usuarios autorizados: inline en USERS (JSON en una línea)
 bun install
 # iniciar contenedores (Qdrant + app)
@@ -29,7 +29,7 @@ El bot es **conversacional, no basado en comandos** — `/start` es el único co
 | Enviar PDF | Guarda, extrae texto (con fallback a OCR) e indexa en Qdrant |
 | Enviar foto | Guarda como JPEG e indexa vía OCR |
 | Enviar otro documento | Guarda en disco (no se indexa) |
-| Enviar texto | Botones (**Subir**, **Archivos**, **Contraseña**, **Nota**, **Notas**), estados pendientes, o pregunta RAG (DeepSeek) |
+| Enviar texto | Botones (**Subir**, **Archivos**, **Contraseña**, **Nota**, **Notas**), estados pendientes, o pregunta RAG (OpenRouter) |
 | **Nota** | Guarda el siguiente mensaje como nota (buscable por RAG) |
 
 Además:
@@ -50,7 +50,7 @@ src/
 └── infrastructure/       # Adaptadores que implementan los puertos:
     ├── telegram/         #   BotApp (grammY)
     ├── web/              #   servidor Bun + API JSON, sirve el SPA de web/dist/
-    ├── llm/              #   DeepseekLlm, LlmTitler, LlmTagger
+    ├── llm/              #   ChatLlm, LlmTitler, LlmTagger
     ├── embedding/        #   TransformersEmbedder (e5-small, 384d)
     ├── vector/           #   QdrantVectorIndex (colección "documents")
     ├── pdf/ ocr/ text/   #   UnpdfTextExtractor, TesseractOcr, RecursiveChunker
@@ -64,7 +64,7 @@ src/
 ## Stack
 
 - **Bot**: grammY v1
-- **LLM**: DeepSeek vía LangChain (ChatOpenAI compatible) — respuestas RAG, títulos y tags
+- **LLM**: OpenRouter vía LangChain (`openai/gpt-4o` por defecto) — respuestas RAG, títulos y tags
 - **Vector DB**: Qdrant (Cosine distance, 384-dim)
 - **Embeddings**: Transformers.js (Xenova/multilingual-e5-small)
 - **PDF / OCR**: unpdf + Tesseract

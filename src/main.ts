@@ -12,7 +12,7 @@ import { TesseractOcr } from "./infrastructure/ocr/tesseractOcr";
 import { TransformersEmbedder } from "./infrastructure/embedding/transformersEmbedder";
 import { QdrantVectorIndex } from "./infrastructure/vector/qdrantVectorIndex";
 import { RecursiveChunker } from "./infrastructure/text/recursiveChunker";
-import { DeepseekLlm } from "./infrastructure/llm/deepseekLlm";
+import { ChatLlm } from "./infrastructure/llm/chatLlm";
 import { LlmTitler } from "./infrastructure/llm/llmTitler";
 import { LlmTagger } from "./infrastructure/llm/llmTagger";
 import { LlmEmailSummarizer } from "./infrastructure/llm/llmEmailSummarizer";
@@ -62,9 +62,9 @@ console.log("Embedding model ready.");
 const vectorIndex = new QdrantVectorIndex(cfg.qdrantUrl, embedder.dimensions());
 
 // Title generation is optional — only available when an LLM is configured.
-const titler = cfg.deepseekApiKey ? new LlmTitler(cfg) : null;
+const titler = cfg.llmApiKey ? new LlmTitler(cfg) : null;
 // Tag generation is optional too, on the same LLM availability.
-const tagger = cfg.deepseekApiKey ? new LlmTagger(cfg) : null;
+const tagger = cfg.llmApiKey ? new LlmTagger(cfg) : null;
 
 // Shared Google OAuth client, reused by both email ingestion and calendar
 // scheduling (same consent — the calendar.events scope is already granted).
@@ -99,8 +99,8 @@ const deleteNote = new DeleteNote(notes, vectorIndex);
 const deleteDocument = new DeleteDocument(repo, vectorIndex);
 
 let askQuestion: AskQuestion | null = null;
-if (cfg.deepseekApiKey) {
-  const llm = new DeepseekLlm(cfg);
+if (cfg.llmApiKey) {
+  const llm = new ChatLlm(cfg);
   askQuestion = new AskQuestion(
     embedder,
     vectorIndex,
@@ -127,7 +127,7 @@ if (cfg.emailEnabled) {
       .map((u) => [u.email!.toLowerCase().trim(), u.id] as const),
   );
   // Optional LLM triage: only save clear, useful email bodies as notes.
-  const summarizer = cfg.deepseekApiKey ? new LlmEmailSummarizer(cfg) : null;
+  const summarizer = cfg.llmApiKey ? new LlmEmailSummarizer(cfg) : null;
   const archive = new AdmZipExtractor();
   ingestEmail = new IngestEmail(
     source,

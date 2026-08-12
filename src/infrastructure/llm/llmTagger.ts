@@ -1,9 +1,10 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { ChatOpenAI } from "@langchain/openai";
+import type { ChatOpenAI } from "@langchain/openai";
 
 import type { Tagger } from "../../domain/ports";
 import { normalizeTags, MAX_TAGS } from "../../domain/tags";
 import type { BotConfig } from "../config";
+import { createChatModel } from "./chatModel";
 
 // Tags only need the document header (type, organ/zone, exam, date), so feeding
 // the start of the text keeps the call cheap.
@@ -20,21 +21,13 @@ const SYSTEM_PROMPT =
   "Máximo 8 tags. Si no hay nada útil, devuelve []. " +
   'Ejemplo de salida: ["urianálisis", "orina", "riñón", "2024-03-12"]';
 
-// Generates medical tags from a document's text via the DeepSeek-compatible
-// chat API. A single non-agentic completion — no tools, low temperature.
+// Generates medical tags from a document's text. A single non-agentic
+// completion — no tools, low temperature.
 export class LlmTagger implements Tagger {
   private readonly model: ChatOpenAI;
 
   constructor(config: BotConfig) {
-    if (!config.deepseekApiKey) {
-      throw new Error("DEEPSEEK_API_KEY is required to initialize LlmTagger");
-    }
-    this.model = new ChatOpenAI({
-      model: config.deepseekModel,
-      temperature: 0.2,
-      apiKey: config.deepseekApiKey,
-      configuration: { baseURL: config.deepseekBaseUrl },
-    });
+    this.model = createChatModel(config);
   }
 
   async generate(text: string): Promise<string[]> {
