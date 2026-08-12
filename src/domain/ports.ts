@@ -196,3 +196,8 @@ export interface CalendarService {
   // to the user.
   createEvent(event: CalendarEvent): Promise<{ id: string; htmlLink: string }>;
 }
+
+// Transcribes audio to text. Implemented by WhisperTranscriber.
+export interface Transcriber {
+  transcribe(audioBuffer: Buffer, mimeType: string): Promise<string>;
+}

@@ -23,6 +23,7 @@ import { createGoogleAuth } from "./infrastructure/google/googleAuth";
 import { GoogleCalendarService } from "./infrastructure/google/googleCalendarService";
 import { GmailApiSource } from "./infrastructure/email/gmailApiSource";
 import { AdmZipExtractor } from "./infrastructure/archive/admZipExtractor";
+import { WhisperTranscriber } from "./infrastructure/whisper/whisperTranscriber";
 
 import { IndexPdf } from "./application/indexPdf";
 import { IndexImage } from "./application/indexImage";
@@ -146,6 +147,7 @@ if (cfg.emailEnabled) {
 }
 
 // --- Driver adapters ---
+const transcriber = cfg.whisperUrl ? new WhisperTranscriber(cfg.whisperUrl) : null;
 const bot = new BotApp(
   cfg,
   repo,
@@ -157,6 +159,7 @@ const bot = new BotApp(
   askQuestion,
   vault,
   sessions,
+  transcriber,
 );
 
 const WARNING_MESSAGE =

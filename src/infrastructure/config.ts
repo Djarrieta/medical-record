@@ -40,6 +40,8 @@ export interface BotConfig {
   calendarEnabled: boolean;
   calendarId: string;
   calendarTimeZone: string;
+  // Whisper speech-to-text. When set, the bot can transcribe voice messages.
+  whisperUrl?: string;
 }
 
 export class Config {
@@ -97,6 +99,7 @@ export class Config {
       calendarEnabled,
       calendarId: process.env.GOOGLE_CALENDAR_ID ?? "primary",
       calendarTimeZone: process.env.CALENDAR_TIMEZONE ?? "America/Bogota",
+      whisperUrl: process.env.WHISPER_URL || undefined,
     };
   }
 }

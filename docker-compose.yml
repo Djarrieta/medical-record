@@ -5,20 +5,20 @@ services:
     env_file: .env
     environment:
       - QDRANT_URL=http://qdrant:6333
+      - WHISPER_URL=http://whisper-service:9000
       - WEB_PORT=3000
     ports:
       - "3000:3000"
     volumes:
       - ./data:/app/data
-      # Bun runs TypeScript directly, so the app needs no build step. Bind-mount
-      # the source + built SPA so code deploys are a `restart` (seconds), not an
-      # image rebuild. node_modules stays baked in the image (not mounted), so a
-      # full `--build` is only needed when dependencies or the Dockerfile change.
       - ./src:/app/src
       - ./web/dist:/app/web/dist
     depends_on:
       qdrant:
         condition: service_healthy
+    networks:
+      - default
+      - shared-services
     restart: unless-stopped
 
   qdrant:
@@ -33,3 +33,7 @@ services:
       interval: 5s
       retries: 5
     restart: unless-stopped
+
+networks:
+  shared-services:
+    external: true
